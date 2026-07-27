@@ -44,8 +44,18 @@ pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
     let dir = sessions_dir(config_dir);
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
     let path = dir.join(format!("{}.json", session.id));
+    let tmp_path = dir.join(format!("{}.json.tmp.{}", session.id, rand_u32()));
     let json = serde_json::to_string_pretty(session)?;
-    std::fs::write(&path, json).with_context(|| format!("write {}", path.display()))?;
+
+    // ponytail: atomic rename provides crash-safety on POSIX/same filesystem; upgrade to lockfile or cross-dev fallback if needed.
+    if let Err(e) = std::fs::write(&tmp_path, json) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| format!("write {}", tmp_path.display()));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()));
+    }
     Ok(path)
 }
 
