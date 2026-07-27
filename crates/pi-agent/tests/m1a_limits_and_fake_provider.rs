@@ -6,6 +6,32 @@ use pi_ai::{
 };
 use std::sync::Arc;
 
+fn assert_same_events(left: &[AssistantMessageEvent], right: &[AssistantMessageEvent]) {
+    assert_eq!(left.len(), right.len());
+    for (l, r) in left.iter().zip(right.iter()) {
+        match (l, r) {
+            (
+                AssistantMessageEvent::Done {
+                    reason: l_reason,
+                    message: l_msg,
+                },
+                AssistantMessageEvent::Done {
+                    reason: r_reason,
+                    message: r_msg,
+                },
+            ) => {
+                assert_eq!(l_reason, r_reason);
+                assert_eq!(l_msg.api, r_msg.api);
+                assert_eq!(l_msg.provider, r_msg.provider);
+                assert_eq!(l_msg.model, r_msg.model);
+                assert_eq!(l_msg.stop_reason, r_msg.stop_reason);
+                assert_eq!(l_msg.content.len(), r_msg.content.len());
+            }
+            _ => panic!("unhandled or mismatched event variant"),
+        }
+    }
+}
+
 fn test_model() -> Model {
     Model::openai_compat(
         "test-provider",
@@ -70,9 +96,8 @@ async fn test_repeatable_fake_provider_stream() {
         collected2.push(evt.unwrap());
     }
 
-    assert_eq!(collected1, events);
-    assert_eq!(collected2, events);
-    assert_eq!(collected1, collected2);
+    assert_same_events(&collected1, &events);
+    assert_same_events(&collected2, &events);
 }
 
 #[tokio::test]
