@@ -55,7 +55,7 @@ pub async fn run_agent_with_history(
     let mut turn: u32 = 0;
     let mut stopped_at_turn_limit = false;
 
-    'outer: while turn < config.max_turns {
+    'outer: while turn < config.runtime_limits.max_turns {
         turn += 1;
         emit(&events, AgentEvent::TurnStart);
 
@@ -221,7 +221,7 @@ pub async fn run_agent_with_history(
         }
     }
 
-    if turn >= config.max_turns {
+    if turn >= config.runtime_limits.max_turns {
         stopped_at_turn_limit = true;
     }
 

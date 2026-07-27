@@ -80,13 +80,24 @@ pub fn tool_def(t: &dyn AgentTool) -> Tool {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeLimits {
+    pub max_turns: u32,
+}
+
+impl Default for RuntimeLimits {
+    fn default() -> Self {
+        Self { max_turns: 32 }
+    }
+}
+
 /// Agent configuration controlling the loop.
 #[derive(Clone)]
 pub struct AgentConfig {
     pub model: Model,
     pub thinking_level: ThinkingLevel,
     pub stream_options: StreamOptions,
-    pub max_turns: u32,
+    pub runtime_limits: RuntimeLimits,
     pub tools: Vec<Arc<dyn AgentTool>>,
     pub system_prompt: String,
     pub permission: Arc<dyn PermissionPolicy>,
@@ -99,7 +110,7 @@ impl AgentConfig {
             model,
             thinking_level: ThinkingLevel::Off,
             stream_options: StreamOptions::default(),
-            max_turns: 32,
+            runtime_limits: RuntimeLimits::default(),
             tools: Vec::new(),
             system_prompt: system_prompt.into(),
             permission: Arc::new(AllowAllPolicy),
@@ -113,7 +124,7 @@ impl AgentConfig {
     }
 
     pub fn with_max_turns(mut self, n: u32) -> Self {
-        self.max_turns = n;
+        self.runtime_limits.max_turns = n;
         self
     }
 

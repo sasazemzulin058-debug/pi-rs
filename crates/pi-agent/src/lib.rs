@@ -15,5 +15,5 @@ pub use agent_loop::{run_agent, run_agent_with_history, AgentRun};
 pub use error::{AgentError, Result};
 pub use types::{
     tool_def, AgentConfig, AgentEvent, AgentTool, AgentToolResult, AllowAllPolicy,
-    PermissionDecision, PermissionPolicy,
+    PermissionDecision, PermissionPolicy, RuntimeLimits,
 };

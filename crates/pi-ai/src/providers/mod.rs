@@ -45,3 +45,28 @@ impl ProviderFactory for DefaultProviderFactory {
         crate::stream_simple(model, context, options).await
     }
 }
+
+/// Fake provider factory that replays a fixed sequence of events on stream().
+pub struct FakeProviderFactory {
+    events: Vec<crate::types::AssistantMessageEvent>,
+}
+
+impl FakeProviderFactory {
+    pub fn new(events: Vec<crate::types::AssistantMessageEvent>) -> Self {
+        Self { events }
+    }
+}
+
+#[async_trait]
+impl ProviderFactory for FakeProviderFactory {
+    async fn stream(
+        &self,
+        _model: &Model,
+        _context: &Context,
+        _options: &StreamOptions,
+    ) -> Result<AssistantMessageEventStream> {
+        let stream_events: Vec<Result<crate::types::AssistantMessageEvent>> =
+            self.events.iter().cloned().map(Ok).collect();
+        Ok(Box::pin(futures::stream::iter(stream_events)))
+    }
+}

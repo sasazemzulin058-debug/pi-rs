@@ -15,7 +15,8 @@ pub mod types;
 pub use error::{Error, Result};
 pub use providers::{
     anthropic::AnthropicProvider, google::GoogleProvider, openai::OpenAiProvider,
-    openai_responses::OpenAiResponsesProvider, DefaultProviderFactory, Provider, ProviderFactory,
+    openai_responses::OpenAiResponsesProvider, DefaultProviderFactory, FakeProviderFactory,
+    Provider, ProviderFactory,
 };
 pub use stream::AssistantMessageEventStream;
 pub use types::{
