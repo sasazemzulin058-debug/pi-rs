@@ -6,4 +6,4 @@ language = "en"
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/nktkt/pi"
+git-repository-url = "https://github.com/sasazemzulin058-debug/pi-rs"

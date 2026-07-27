@@ -4,7 +4,7 @@
 
 - [Install](./install.md)
 - [Architecture](./architecture.md)
-- [CLI](./cli/print-mode.md)
+- CLI
   - [Print mode](./cli/print-mode.md)
   - [Interactive](./cli/interactive.md)
   - [Sessions](./cli/sessions.md)
