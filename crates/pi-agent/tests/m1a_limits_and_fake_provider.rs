@@ -1,8 +1,8 @@
 use futures::StreamExt;
 use pi_agent::{run_agent, AgentConfig, RuntimeLimits};
 use pi_ai::{
-    now_ms, AssistantMessage, AssistantMessageEvent, Content, FakeProviderFactory, Message,
-    Model, ProviderFactory, StopReason, Usage,
+    now_ms, AssistantMessage, AssistantMessageEvent, Content, FakeProviderFactory, Message, Model,
+    ProviderFactory, StopReason, Usage,
 };
 use std::sync::Arc;
 
