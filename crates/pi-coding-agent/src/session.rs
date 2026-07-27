@@ -54,7 +54,8 @@ pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
     }
     if let Err(e) = std::fs::rename(&tmp_path, &path) {
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(e).with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()));
+        return Err(e)
+            .with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()));
     }
     Ok(path)
 }
