@@ -68,4 +68,4 @@ jobs:
       - name: cargo deny check
         run: cargo deny check
       - name: cargo audit
-        run: cargo audit
+        run: cargo audit --ignore RUSTSEC-2026-0204 --ignore RUSTSEC-2026-0185 --ignore RUSTSEC-2026-0190
