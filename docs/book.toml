@@ -3,7 +3,6 @@ title = "pi"
 description = "Rust port of earendil-works/pi"
 authors = ["Pi Rust Port Contributors"]
 language = "en"
-multilingual = false
 src = "src"
 
 [output.html]
