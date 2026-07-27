@@ -7,9 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use futures::StreamExt;
-use pi_ai::{
-    AssistantMessageEvent, Content, Context, Message, StopReason, ToolResultMessage,
-};
+use pi_ai::{AssistantMessageEvent, Content, Context, Message, StopReason, ToolResultMessage};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tracing::instrument;

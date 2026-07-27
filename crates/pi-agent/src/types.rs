@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pi_ai::{Content, DefaultProviderFactory, Message, Model, ProviderFactory, StreamOptions, ThinkingLevel, Tool};
+use pi_ai::{
+    Content, DefaultProviderFactory, Message, Model, ProviderFactory, StreamOptions, ThinkingLevel,
+    Tool,
+};
 use serde_json::Value;
 
 /// A live result returned from a tool execution.
