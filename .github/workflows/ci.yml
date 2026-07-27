@@ -26,16 +26,35 @@ jobs:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: cargo build
+
+      - name: cargo build workspace debug
         run: cargo build --workspace --all-targets
+
+      - name: cargo build workspace release
+        run: cargo build --workspace --release
+
       - name: cargo test
         run: cargo test --workspace
+
       - name: cargo fmt --check
         if: matrix.rust == 'stable'
         run: cargo fmt --all -- --check
+
       - name: cargo clippy
         if: matrix.rust == 'stable'
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run Python contract tests
+        run: |
+          python3 -m unittest discover -s tests/contract -p "test_*.py"
+
+      - name: Validate fixture manifest (M0 validation - permits pending capture)
+        run: |
+          python3 scripts/validate-fixture-manifest
+
+      - name: Run comparator self-tests
+        run: |
+          python3 scripts/compare-contract-fixtures --self-test
 
   supply-chain:
     name: supply-chain

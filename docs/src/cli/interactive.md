@@ -1,19 +1,19 @@
 # Interactive
 
-Running `pi` with no arguments drops you into the REPL. Assistant text
+Running `pi-rs` with no arguments drops you into the REPL. Assistant text
 streams in as it arrives; tool calls show a confirmation prompt by default
 (see [Permissions](./permissions.md)). After every turn the session is
 persisted to disk (see [Sessions](./sessions.md)).
 
 ```bash
-pi
+pi-rs
 ```
 
 ## Slash commands
 
 ```text
 /help                show command list
-/quit  /exit         quit pi
+/quit  /exit         quit pi-rs
 /reset               start a fresh session
 /model               print the active model
 /tools               list builtin tools

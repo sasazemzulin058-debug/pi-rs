@@ -1,7 +1,7 @@
-//! Optional on-disk defaults for the `pi` CLI.
+//! Optional on-disk defaults for the `pi-rs` CLI.
 //!
-//! Loads `$XDG_CONFIG_HOME/pi/config.toml` (resolved via [`dirs::config_dir`]
-//! joined with `pi`). The file is **entirely optional**: if it is missing,
+//! Loads `$XDG_CONFIG_HOME/pi-rs/config.toml` (resolved via [`dirs::config_dir`]
+//! joined with `pi-rs`). The file is **entirely optional**: if it is missing,
 //! unreadable, or malformed TOML, [`load`] silently falls back to
 //! [`FileConfig::default`] so the CLI keeps starting.
 //!
@@ -11,7 +11,7 @@
 //! # Schema
 //!
 //! ```toml
-//! # ~/.config/pi/config.toml
+//! # ~/.config/pi-rs/config.toml
 //!
 //! # Model id (e.g. "claude-sonnet-4-6", "gpt-4o-mini"). Used to seed
 //! # PI_MODEL when that env var is unset.
@@ -35,7 +35,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-/// Parsed contents of `$XDG_CONFIG_HOME/pi/config.toml`. All fields are
+/// Parsed contents of `$XDG_CONFIG_HOME/pi-rs/config.toml`. All fields are
 /// optional; missing keys deserialize to `None` / `false`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -56,10 +56,10 @@ pub struct FileConfig {
 
 /// Path to the config file under the platform-appropriate config dir.
 pub fn config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|p| p.join("pi").join("config.toml"))
+    dirs::config_dir().map(|p| p.join("pi-rs").join("config.toml"))
 }
 
-/// Load [`FileConfig`] from `$XDG_CONFIG_HOME/pi/config.toml`.
+/// Load [`FileConfig`] from `$XDG_CONFIG_HOME/pi-rs/config.toml`.
 ///
 /// Returns [`FileConfig::default`] if the file is missing or cannot be
 /// parsed. Errors are swallowed by design — a broken config file must not

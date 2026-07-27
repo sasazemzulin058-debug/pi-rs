@@ -6,11 +6,11 @@ Install the CLI from crates.io:
 cargo install pi-coding-agent
 ```
 
-The crate name is `pi-coding-agent`; the installed binary is `pi`.
+The crate name is `pi-coding-agent`; the installed binary is `pi-rs`.
 
 ## Environment variables
 
-`pi` reads its API key from the environment based on which model you target:
+`pi-rs` reads its API key from the environment based on which model you target:
 
 | Variable | Provider |
 |----------|----------|
@@ -20,13 +20,13 @@ The crate name is `pi-coding-agent`; the installed binary is `pi`.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi -p "Say hi"
+pi-rs -p "Say hi"
 ```
 
 You can also pick the active model explicitly with `PI_MODEL`:
 
 ```bash
-PI_MODEL=claude-opus-4-7   pi -p "..."   # Anthropic
-PI_MODEL=gpt-4o            pi -p "..."   # OpenAI
-PI_MODEL=gemini-2.0-flash  pi -p "..."   # Google
+PI_MODEL=claude-opus-4-7   pi-rs -p "..."   # Anthropic
+PI_MODEL=gpt-4o            pi-rs -p "..."   # OpenAI
+PI_MODEL=gemini-2.0-flash  pi-rs -p "..."   # Google
 ```

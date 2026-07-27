@@ -21,7 +21,7 @@
 
 - [x] Streaming render in the REPL.
 - [x] **Session persistence** under `$XDG_CONFIG_HOME/pi/sessions/<id>.json`;
-      `pi --resume <id>` and `pi sessions list / show / delete`.
+      `pi-rs --resume <id>` and `pi-rs sessions list / show / delete` (inherited behavior; candidate until Pi fixtures pass).
 - [x] **`AGENTS.md` / project-prompt loading**.
 - [x] Slash commands: `/clear` (as `/reset`), `/cost`, `/tools`, `/sessions`,
       `/resume`, `/session`, `/help`, `/model`, `/quit`, `/exit`.

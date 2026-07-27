@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+from contract_fixture_lib import load_manifest, validate_manifest
+
+def main():
+    parser = argparse.ArgumentParser(description="Validate Pi compatibility fixture manifest")
+    parser.add_argument("--milestone", help="Validate only this milestone, requiring all its cases to be captured")
+    args = parser.parse_args()
+    
+    try:
+        manifest = load_manifest()
+        errors = validate_manifest(manifest, milestone=args.milestone)
+        
+        if errors:
+            print("Manifest validation FAILED:")
+            for err in errors:
+                print(f" - {err}")
+            sys.exit(1)
+            
+        print("Manifest validation PASSED")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(2)
+
+if __name__ == "__main__":
+    main()

@@ -37,11 +37,11 @@ jobs:
       - name: package
         run: |
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/pi dist/pi-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/pi-rs dist/pi-rs-${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
-          name: pi-${{ matrix.target }}
-          path: dist/pi-${{ matrix.target }}
+          name: pi-rs-${{ matrix.target }}
+          path: dist/pi-rs-${{ matrix.target }}
 
   release:
     needs: build
@@ -54,5 +54,5 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/pi-*
+          files: dist/pi-rs-*
           generate_release_notes: true

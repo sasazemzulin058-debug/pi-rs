@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use pi_ai::{Model, ThinkingLevel};
 
-pub const APP_NAME: &str = "pi";
+pub const APP_NAME: &str = "pi-rs";
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {

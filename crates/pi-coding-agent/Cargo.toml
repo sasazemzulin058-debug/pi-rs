@@ -1,6 +1,6 @@
 [package]
 name = "pi-coding-agent"
-description = "Interactive coding agent CLI (Rust port of @earendil-works/pi-coding-agent). Streaming REPL, session persistence, AGENTS.md loader, slash commands, per-tool permissions. Install with `cargo install pi-coding-agent`; the binary is `pi`."
+description = "Interactive coding agent CLI (Rust port of @earendil-works/pi-coding-agent). Streaming REPL, session persistence, AGENTS.md loader, slash commands, per-tool permissions. Install with `cargo install pi-coding-agent`; the binary is `pi-rs`."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ keywords = ["llm", "ai", "coding-agent", "cli", "agent"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
-name = "pi"
+name = "pi-rs"
 path = "src/main.rs"
 
 [dependencies]

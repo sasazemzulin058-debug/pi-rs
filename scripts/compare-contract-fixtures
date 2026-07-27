@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+import sys
+import os
+import argparse
+import json
+from contract_fixture_lib import load_manifest, compare_structures
+
+def run_self_test():
+    print("Running comparator self-test...")
+    
+    # Base structure
+    expected = {
+        "uuid": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+        "timestamp": "2026-07-27T12:34:56.789Z",
+        "parent_id": "00000000-1111-2222-3333-444455556666",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Hello"
+            },
+            {
+                "role": "assistant",
+                "stop_reason": "stop",
+                "content": "Hi",
+                "tool_calls": [
+                    {"id": "call_1", "type": "function", "function": {"name": "read"}},
+                    {"id": "call_2", "type": "function", "function": {"name": "bash"}}
+                ]
+            }
+        ]
+    }
+    
+    # 1. Mutate role
+    mutated_role = json.loads(json.dumps(expected))
+    mutated_role["messages"][0]["role"] = "assistant"
+    diff_role = compare_structures(expected, mutated_role)
+    if diff_role is None:
+        print("Self-test FAILED: Mutated role was not detected.")
+        return False
+    print(" - Mutated role correctly detected:")
+    print(f"   {diff_role.replace(chr(10), chr(10)+'   ')}")
+    
+    # 2. Mutate stop reason
+    mutated_stop = json.loads(json.dumps(expected))
+    mutated_stop["messages"][1]["stop_reason"] = "length"
+    diff_stop = compare_structures(expected, mutated_stop)
+    if diff_stop is None:
+        print("Self-test FAILED: Mutated stop reason was not detected.")
+        return False
+    print(" - Mutated stop reason correctly detected:")
+    print(f"   {diff_stop.replace(chr(10), chr(10)+'   ')}")
+    
+    # 3. Mutate tool order
+    mutated_order = json.loads(json.dumps(expected))
+    mutated_order["messages"][1]["tool_calls"] = [
+        {"id": "call_2", "type": "function", "function": {"name": "bash"}},
+        {"id": "call_1", "type": "function", "function": {"name": "read"}}
+    ]
+    diff_order = compare_structures(expected, mutated_order)
+    if diff_order is None:
+        print("Self-test FAILED: Mutated tool order was not detected.")
+        return False
+    print(" - Mutated tool order correctly detected:")
+    print(f"   {diff_order.replace(chr(10), chr(10)+'   ')}")
+    
+    # 4. Mutate session parent ID
+    mutated_parent = json.loads(json.dumps(expected))
+    mutated_parent["parent_id"] = "99999999-9999-9999-9999-999999999999"
+    diff_parent = compare_structures(expected, mutated_parent)
+    if diff_parent is None:
+        print("Self-test FAILED: Mutated session parent ID was not detected.")
+        return False
+    print(" - Mutated session parent ID correctly detected:")
+    print(f"   {diff_parent.replace(chr(10), chr(10)+'   ')}")
+    
+    print("Comparator self-test PASSED")
+    return True
+
+def main():
+    parser = argparse.ArgumentParser(description="Compare contract fixtures against actual output files")
+    parser.add_argument("--milestone", help="Milestone to compare (e.g. M1a)")
+    parser.add_argument("--self-test", action="store_true", help="Run comparator self-tests")
+    parser.add_argument("--actual", help="Directory containing actual output files (required unless --self-test is specified)")
+    args = parser.parse_args()
+    
+    if args.self_test:
+        success = run_self_test()
+        sys.exit(0 if success else 1)
+        
+    if not args.milestone:
+        parser.error("--milestone is required unless --self-test is specified")
+    if not args.actual:
+        parser.error("--actual directory is required unless --self-test is specified")
+        
+    try:
+        manifest = load_manifest()
+        req_cases = manifest.get("requiredCaseIds", {})
+        cases = manifest.get("cases", {})
+        
+        target_milestones = [args.milestone]
+        
+        has_errors = False
+        skipped_count = 0
+        passed_count = 0
+        
+        for m in target_milestones:
+            if m not in req_cases:
+                print(f"Error: Milestone '{m}' not defined in manifest requiredCaseIds")
+                sys.exit(1)
+                
+            print(f"Comparing milestone {m}...")
+            for case_id in req_cases[m]:
+                case_info = cases.get(case_id, {})
+                captured = case_info.get("captured", False)
+                
+                if not captured:
+                    print(f"Case {case_id}: REJECTED - required case is pending capture")
+                    has_errors = True
+                    continue
+                    
+                fixture_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(__file__)),
+                    "fixtures", "upstream-pi"
+                )
+                expected_file = os.path.join(fixture_dir, f"{case_id}.expected.json")
+                actual_file = os.path.join(args.actual, f"{case_id}.json")
+                
+                if not os.path.exists(expected_file):
+                    print(f"Case {case_id}: ERROR - expected fixture file missing at {expected_file}")
+                    has_errors = True
+                    continue
+                    
+                if not os.path.exists(actual_file):
+                    print(f"Case {case_id}: ERROR - actual output file missing at {actual_file}")
+                    has_errors = True
+                    continue
+                    
+                try:
+                    with open(expected_file, 'r', encoding='utf-8') as f:
+                        expected_data = json.load(f)
+                    with open(actual_file, 'r', encoding='utf-8') as f:
+                        actual_data = json.load(f)
+                except Exception as e:
+                    print(f"Case {case_id}: ERROR - failed to load JSON files: {e}")
+                    has_errors = True
+                    continue
+                    
+                diff = compare_structures(expected_data, actual_data)
+                if diff:
+                    print(f"Case {case_id}: FAILED")
+                    print(diff)
+                    has_errors = True
+                else:
+                    print(f"Case {case_id}: PASSED")
+                    passed_count += 1
+                    
+        print("\nSummary:")
+        print(f" - Passed: {passed_count}")
+        print(f" - Pending/Skipped: {skipped_count}")
+        print(f" - Failed/Errors: {1 if has_errors else 0}")
+        
+        sys.exit(1 if has_errors else 0)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(2)
+
+if __name__ == "__main__":
+    main()

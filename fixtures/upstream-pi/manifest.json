@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "reference": {
+    "package": "@earendil-works/pi-coding-agent",
+    "version": "0.82.1",
+    "commit": "2efa728d2ee90ef597626e96b1e28ef2b279f07c",
+    "lockfileSha256": "472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
+  },
+  "captureEnvironment": {
+    "captureStatus": "pending",
+    "host": null,
+    "nodeVersion": null,
+    "bunVersion": null,
+    "digest": null
+  },
+  "requiredCaseIds": {
+    "M0": [],
+    "M1a": [
+      "cli.print.basic",
+      "agent.serial-tool-loop",
+      "provider.openai-chat.fragmented-sse",
+      "provider.fake-stream-cancel",
+      "tool.read.bounds",
+      "tool.bash.cancel-descendants",
+      "resource.context-precedence",
+      "resource.untrusted-project",
+      "session.native-append-recover",
+      "session.pi-import-checksum",
+      "session.pi-cow-provenance",
+      "extension.node-absent",
+      "termux.env"
+    ],
+    "M1": [
+      "cli.json-events",
+      "tool.write",
+      "tool.edit",
+      "tool.grep-find-ls",
+      "resources.skills-prompts-themes",
+      "agent.retry-auto-compaction"
+    ],
+    "M2": [
+      "cli.interactive",
+      "cli.rpc",
+      "agent.parallel-tools",
+      "agent.manual-compaction-scheduling",
+      "provider.anthropic",
+      "provider.openai-responses",
+      "provider.google"
+    ],
+    "M3": [
+      "resources.remote-packages",
+      "session.pi-inplace-write",
+      "extension.pi-tier-a",
+      "extension.bun-private-native-custom-ui",
+      "extension.omp"
+    ]
+  },
+  "cases": {
+    "cli.print.basic": {
+      "captured": false,
+      "description": "Headless --print prompt execution",
+      "oracle": "upstream-pi"
+    },
+    "agent.serial-tool-loop": {
+      "captured": false,
+      "description": "Serial tool execution and cancellation",
+      "oracle": "upstream-pi"
+    },
+    "provider.openai-chat.fragmented-sse": {
+      "captured": false,
+      "description": "OpenAI Chat Completions compatible SSE stream parsing",
+      "oracle": "upstream-pi"
+    },
+    "provider.fake-stream-cancel": {
+      "captured": false,
+      "description": "Deterministic provider cancel/abort and SSE event limits",
+      "oracle": "pi-rs-invariant"
+    },
+    "tool.read.bounds": {
+      "captured": false,
+      "description": "Bounded text read with 1-indexed offsets",
+      "oracle": "upstream-pi"
+    },
+    "tool.bash.cancel-descendants": {
+      "captured": false,
+      "description": "Shell execution, process-group cancellation and reaping",
+      "oracle": "upstream-pi"
+    },
+    "resource.context-precedence": {
+      "captured": false,
+      "description": "Global/current AGENTS.md or CLAUDE.md context precedence",
+      "oracle": "upstream-pi"
+    },
+    "resource.untrusted-project": {
+      "captured": false,
+      "description": "Trust decision data model without loading project resources",
+      "oracle": "upstream-pi"
+    },
+    "session.native-append-recover": {
+      "captured": false,
+      "description": "New native v3-compatible JSONL session append and recovery",
+      "oracle": "pi-rs-invariant"
+    },
+    "session.pi-import-checksum": {
+      "captured": false,
+      "description": "Read-only import of original Pi sessions with checksum check",
+      "oracle": "pi-rs-invariant"
+    },
+    "session.pi-cow-provenance": {
+      "captured": false,
+      "description": "First mutation of imported Pi session creates copy-on-write session",
+      "oracle": "pi-rs-invariant"
+    },
+    "extension.node-absent": {
+      "captured": false,
+      "description": "Agent operates normally when Node is absent from PATH",
+      "oracle": "pi-rs-invariant"
+    },
+    "termux.env": {
+      "captured": false,
+      "description": "Environment validation for paths, TMPDIR, and shell",
+      "oracle": "pi-rs-invariant"
+    },
+    "cli.json-events": {
+      "captured": false,
+      "description": "Structured JSON event output",
+      "oracle": "upstream-pi"
+    },
+    "tool.write": {
+      "captured": false,
+      "description": "Atomic write semantics",
+      "oracle": "upstream-pi"
+    },
+    "tool.edit": {
+      "captured": false,
+      "description": "Exact multi-edit semantics",
+      "oracle": "upstream-pi"
+    },
+    "tool.grep-find-ls": {
+      "captured": false,
+      "description": "Ignored-path discovery and bounded search",
+      "oracle": "upstream-pi"
+    },
+    "resources.skills-prompts-themes": {
+      "captured": false,
+      "description": "Skills, prompt templates and themes",
+      "oracle": "upstream-pi"
+    },
+    "agent.retry-auto-compaction": {
+      "captured": false,
+      "description": "Serial retry and one automatic context-overflow compaction retry",
+      "oracle": "upstream-pi"
+    },
+    "cli.interactive": {
+      "captured": false,
+      "description": "Interactive terminal mode",
+      "oracle": "pi-rs-invariant"
+    },
+    "cli.rpc": {
+      "captured": false,
+      "description": "Public Pi JSONL RPC",
+      "oracle": "upstream-pi"
+    },
+    "agent.parallel-tools": {
+      "captured": false,
+      "description": "Parallel batch ordering and cancellation",
+      "oracle": "upstream-pi"
+    },
+    "agent.manual-compaction-scheduling": {
+      "captured": false,
+      "description": "Manual compaction and scheduling interaction with queue/steer/follow-up",
+      "oracle": "upstream-pi"
+    },
+    "provider.anthropic": {
+      "captured": false,
+      "description": "Anthropic Messages",
+      "oracle": "upstream-pi"
+    },
+    "provider.openai-responses": {
+      "captured": false,
+      "description": "OpenAI Responses",
+      "oracle": "upstream-pi"
+    },
+    "provider.google": {
+      "captured": false,
+      "description": "Google Generative AI",
+      "oracle": "upstream-pi"
+    },
+    "resources.remote-packages": {
+      "captured": false,
+      "description": "npm: and git: package source installation",
+      "oracle": "pi-rs-invariant"
+    },
+    "session.pi-inplace-write": {
+      "captured": false,
+      "description": "In-place mutation of Pi session files",
+      "oracle": "pi-rs-invariant"
+    },
+    "extension.pi-tier-a": {
+      "captured": false,
+      "description": "Tools, commands, cancelable hooks, persisted state and basic UI via optional Node host",
+      "oracle": "upstream-pi"
+    },
+    "extension.bun-private-native-custom-ui": {
+      "captured": false,
+      "description": "Bun APIs, private imports, native addons and custom Pi TUI components",
+      "oracle": "pi-rs-invariant"
+    },
+    "extension.omp": {
+      "captured": false,
+      "description": "Oh My Pi public API intersection",
+      "oracle": "upstream-pi"
+    }
+  }
+}

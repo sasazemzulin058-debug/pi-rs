@@ -1,0 +1,15 @@
+[
+  "cli.print.basic",
+  "agent.serial-tool-loop",
+  "provider.openai-chat.fragmented-sse",
+  "provider.fake-stream-cancel",
+  "tool.read.bounds",
+  "tool.bash.cancel-descendants",
+  "resource.context-precedence",
+  "resource.untrusted-project",
+  "session.native-append-recover",
+  "session.pi-import-checksum",
+  "session.pi-cow-provenance",
+  "extension.node-absent",
+  "termux.env"
+]

@@ -22,7 +22,7 @@ pi/
 └─ crates/
    ├─ pi-ai/                        # ←→ packages/ai
    ├─ pi-agent/                     # ←→ packages/agent
-   └─ pi-coding-agent/              # ←→ packages/coding-agent (binary: `pi`)
+   └─ pi-coding-agent/              # ←→ packages/coding-agent (binary: `pi-rs`)
 ```
 
 | TS package | Rust crate | Status |
@@ -46,7 +46,7 @@ pi-agent = "1.2"   # agent loop, permission policy, built-in tools
 Install the CLI via:
 
 ```bash
-cargo install pi-coding-agent   # installs binary `pi`
+cargo install pi-coding-agent   # installs binary `pi-rs`
 ```
 
 See the crate-level docs at
@@ -64,30 +64,30 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # or any of: OPENAI_API_KEY, GOOGLE_API_KEY / GEMINI_API_KEY
 
 # One-shot:
-./target/release/pi -p "List the files in this directory and summarize them"
+./target/release/pi-rs -p "List the files in this directory and summarize them"
 
 # Same prompt, JSON-lines on stdout for scripting:
-./target/release/pi -p "..." --json
+./target/release/pi-rs -p "..." --json
 
 # Interactive:
-./target/release/pi
+./target/release/pi-rs
 
 # Resume a saved session:
-./target/release/pi --resume <id>
+./target/release/pi-rs --resume <id>
 
 # Skip permission prompts (bash/write/edit run unconfirmed):
-./target/release/pi --yolo -p "Run the test suite"
+./target/release/pi-rs --yolo -p "Run the test suite"
 
 # List saved sessions:
-./target/release/pi sessions list
+./target/release/pi-rs sessions list
 ```
 
 Pick the model explicitly:
 
 ```bash
-PI_MODEL=claude-opus-4-7   pi -p "..."   # Anthropic
-PI_MODEL=gpt-4o            pi -p "..."   # OpenAI
-PI_MODEL=gemini-2.0-flash  pi -p "..."   # Google (via GOOGLE_API_KEY)
+PI_MODEL=claude-opus-4-7   pi-rs -p "..."   # Anthropic
+PI_MODEL=gpt-4o            pi-rs -p "..."   # OpenAI
+PI_MODEL=gemini-2.0-flash  pi-rs -p "..."   # Google (via GOOGLE_API_KEY)
 ```
 
 ## OpenAI-compatible providers

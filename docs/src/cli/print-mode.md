@@ -1,10 +1,10 @@
 # Print mode
 
-`pi -p <prompt>` runs the agent once and prints its output to stdout, then
+`pi-rs -p <prompt>` runs the agent once and prints its output to stdout, then
 exits. It is the scriptable counterpart to the interactive REPL.
 
 ```bash
-pi -p "List the .rs files in this directory and summarize them"
+pi-rs -p "List the .rs files in this directory and summarize them"
 ```
 
 ## JSON mode
@@ -15,7 +15,7 @@ of human-readable text. The `--json` schema is covered by semver from
 renamed without a major bump.
 
 ```bash
-pi -p "Run the test suite" --json
+pi-rs -p "Run the test suite" --json
 ```
 
 ## Event types

@@ -1,5 +1,5 @@
 //! Session persistence: save transcripts as JSON under
-//! `$XDG_CONFIG_HOME/pi/sessions/<id>.json`, list them, and load by id.
+//! `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.json`, list them, and load by id.
 
 use std::path::{Path, PathBuf};
 

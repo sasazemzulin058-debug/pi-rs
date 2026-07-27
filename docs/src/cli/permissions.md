@@ -25,5 +25,5 @@ including `bash`, `write`, and `edit`. Use with care; this hands the
 agent a loaded gun.
 
 ```bash
-pi --yolo -p "Run the test suite and fix any failures"
+pi-rs --yolo -p "Run the test suite and fix any failures"
 ```

@@ -128,12 +128,12 @@ through 1.0.0 of the original ROADMAP has shipped.
   - New tools: **`web_fetch`** (HTTP GET → coarse-text extraction) and
     **`todo`** (in-memory checklist).
 
-- **`pi-coding-agent` (binary `pi`)**
+- **`pi-coding-agent` (binary `pi-rs`)**
   - Streaming REPL render — assistant text prints as it arrives.
   - **Session persistence** under `$XDG_CONFIG_HOME/pi/sessions/<id>.json`.
     Sessions are saved after every turn and listable / loadable.
-    Subcommands: `pi sessions list | show <id> | delete <id>`.
-    Flag: `pi --resume <id>` resumes interactively.
+    Subcommands: `pi-rs sessions list | show <id> | delete <id>`.
+    Flag: `pi-rs --resume <id>` resumes interactively.
   - **AGENTS.md / CLAUDE.md / `.pi/instructions.md`** loader walks up from
     `cwd` and concatenates each file into the system prompt.
   - New slash commands: `/help /reset /model /tools /cost /sessions

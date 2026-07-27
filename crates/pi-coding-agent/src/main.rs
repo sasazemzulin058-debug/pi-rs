@@ -1,4 +1,4 @@
-//! `pi` — interactive coding agent CLI.
+//! `pi-rs` — interactive coding agent CLI.
 
 mod config;
 mod file_config;
@@ -17,7 +17,7 @@ use crate::config::{parse_thinking_level, AppConfig};
 use crate::permission::{CliPermission, Mode};
 
 #[derive(Parser, Debug)]
-#[command(name = "pi", version, about = "Pi coding agent (Rust port)")]
+#[command(name = "pi-rs", version, about = "Pi coding agent (Rust port)")]
 struct Cli {
     /// One-shot prompt — run agent to completion and exit.
     #[arg(short, long)]
@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    // Load `$XDG_CONFIG_HOME/pi/config.toml` (best-effort) before parsing
+    // Load `$XDG_CONFIG_HOME/pi-rs/config.toml` (best-effort) before parsing
     // argv so `PI_MODEL` can be seeded from the file before the `env`
     // attribute on `Cli::model` resolves it.
     let file_cfg = file_config::load();

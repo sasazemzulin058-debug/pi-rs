@@ -1,0 +1,54 @@
+name: baseline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  baseline-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Check out the untouched commit
+          ref: '0808c756fa1991940def7f0f9837464417149419'
+          # Fetch full history to ensure we unshallow
+          fetch-depth: 0
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Verify baseline - cargo build workspace debug
+        run: |
+          echo "=== Debug Build ===" >> baseline-report.txt
+          cargo build --workspace --all-targets 2>&1 | tee -a baseline-report.txt
+
+      - name: Verify baseline - cargo build workspace release
+        run: |
+          echo "=== Release Build ===" >> baseline-report.txt
+          cargo build --workspace --release 2>&1 | tee -a baseline-report.txt
+
+      - name: Verify baseline - cargo test
+        run: |
+          echo "=== Cargo Test ===" >> baseline-report.txt
+          cargo test --workspace 2>&1 | tee -a baseline-report.txt
+
+      - name: Verify baseline - cargo fmt --check
+        run: |
+          echo "=== Cargo Fmt ===" >> baseline-report.txt
+          cargo fmt --all -- --check 2>&1 | tee -a baseline-report.txt
+
+      - name: Verify baseline - cargo clippy
+        run: |
+          echo "=== Cargo Clippy ===" >> baseline-report.txt
+          cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee -a baseline-report.txt
+
+      - name: Upload baseline report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: m0-baseline-report
+          path: baseline-report.txt

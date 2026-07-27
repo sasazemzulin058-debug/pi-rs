@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use pi_ai::{
-    stream_simple, AssistantMessageEvent, Content, Context, Message, StopReason, ToolResultMessage,
+    AssistantMessageEvent, Content, Context, Message, StopReason, ToolResultMessage,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -31,7 +31,7 @@ pub async fn run_agent(
     run_agent_with_history(config, vec![initial_prompt], events).await
 }
 
-/// Continue a run with an existing transcript. Use this for `pi --resume`.
+/// Continue a run with an existing transcript. Use this for `pi-rs --resume`.
 pub async fn run_agent_with_history(
     config: &AgentConfig,
     mut messages: Vec<Message>,
@@ -72,7 +72,10 @@ pub async fn run_agent_with_history(
             options.reasoning = Some(config.thinking_level);
         }
 
-        let mut stream = stream_simple(&config.model, &ctx, &options).await?;
+        let mut stream = config
+            .provider_factory
+            .stream(&config.model, &ctx, &options)
+            .await?;
 
         let mut final_message: Option<pi_ai::AssistantMessage> = None;
         let mut stop = StopReason::Stop;

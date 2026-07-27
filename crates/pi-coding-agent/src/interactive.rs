@@ -21,7 +21,7 @@ pub async fn run_interactive(
     initial: Option<Session>,
 ) -> anyhow::Result<()> {
     eprintln!(
-        "pi — model: {} ({})  •  slash commands: /help",
+        "pi-rs — model: {} ({})  •  slash commands: /help",
         app.model.name, app.model.provider
     );
 
@@ -127,7 +127,7 @@ fn handle_slash(line: &str, app: &AppConfig, session: &mut Session) -> anyhow::R
     match cmd {
         "/quit" | "/exit" => return Ok(false),
         "/help" => {
-            eprintln!("/quit /exit          quit pi");
+            eprintln!("/quit /exit          quit pi-rs");
             eprintln!("/help                show this help");
             eprintln!(
                 "/reset               clear in-memory transcript (does not delete session file)"

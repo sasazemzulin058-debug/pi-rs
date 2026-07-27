@@ -1,0 +1,54 @@
+name: capture-reference
+
+on:
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: 'Milestone to capture (e.g. M1a)'
+        required: true
+        default: 'M1a'
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          
+      - name: Install Bun
+        uses: oven-sh/bun-setup@v1
+        with:
+          bun-version: '1.3.14'
+          
+      - name: Clone upstream Pi
+        run: |
+          git clone https://github.com/earendil-works/pi-mono.git upstream-pi-mono
+          cd upstream-pi-mono
+          git checkout 2efa728d2ee90ef597626e96b1e28ef2b279f07c
+          
+      - name: Verify lockfile SHA-256
+        run: |
+          # Upstream lockfile SHA-256 must match exactly:
+          # 472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59
+          test "$(sha256sum upstream-pi-mono/package-lock.json | awk '{print $1}')" = "472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
+          
+      - name: Install upstream Pi dependencies
+        run: |
+          cd upstream-pi-mono
+          bun install --frozen-lockfile
+          
+      - name: Run reference capture
+        env:
+          PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
+        run: |
+          python3 scripts/capture-upstream-fixtures --milestone "${{ github.event.inputs.milestone }}"
+          
+      - name: Archive captured fixtures
+        uses: actions/upload-artifact@v4
+        with:
+          name: captured-fixtures-${{ github.event.inputs.milestone }}
+          path: fixtures/upstream-pi/

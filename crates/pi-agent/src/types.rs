@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pi_ai::{Content, Message, Model, StreamOptions, ThinkingLevel, Tool};
+use pi_ai::{Content, DefaultProviderFactory, Message, Model, ProviderFactory, StreamOptions, ThinkingLevel, Tool};
 use serde_json::Value;
 
 /// A live result returned from a tool execution.
@@ -87,6 +87,7 @@ pub struct AgentConfig {
     pub tools: Vec<Arc<dyn AgentTool>>,
     pub system_prompt: String,
     pub permission: Arc<dyn PermissionPolicy>,
+    pub provider_factory: Arc<dyn ProviderFactory>,
 }
 
 impl AgentConfig {
@@ -99,6 +100,7 @@ impl AgentConfig {
             tools: Vec::new(),
             system_prompt: system_prompt.into(),
             permission: Arc::new(AllowAllPolicy),
+            provider_factory: Arc::new(DefaultProviderFactory),
         }
     }
 
@@ -119,6 +121,11 @@ impl AgentConfig {
 
     pub fn with_thinking(mut self, level: ThinkingLevel) -> Self {
         self.thinking_level = level;
+        self
+    }
+
+    pub fn with_provider_factory(mut self, factory: Arc<dyn ProviderFactory>) -> Self {
+        self.provider_factory = factory;
         self
     }
 }
