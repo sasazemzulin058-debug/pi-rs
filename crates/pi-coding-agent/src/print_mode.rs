@@ -63,7 +63,12 @@ pub async fn run_print(
 
     let res = handle.await??;
     session.replace_messages(res.messages.clone());
-    crate::session::save_jsonl(&app.config_dir.join("sessions").join(format!("{}.jsonl", session.id)), &session)?;
+    crate::session::save_jsonl(
+        &app.config_dir
+            .join("sessions")
+            .join(format!("{}.jsonl", session.id)),
+        &session,
+    )?;
     if json_mode {
         emit_json(&json!({
             "type": "agent_end",
