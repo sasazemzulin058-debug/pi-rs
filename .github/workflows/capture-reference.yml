@@ -19,11 +19,6 @@ jobs:
         with:
           node-version: '24.18.0'
           
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: '1.3.14'
-          
       - name: Clone upstream Pi
         run: |
           git clone https://github.com/earendil-works/pi-mono.git upstream-pi-mono
