@@ -175,3 +175,33 @@ fn fixture_contract_session_pi_cow_provenance() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn session_jsonl_load_save_list_roundtrip() {
+    let dir = temp_dir();
+
+    let pi_path = dir.join("pi_session.jsonl");
+    std::fs::write(&pi_path, PI_V3_JSONL_FIXTURE).unwrap();
+    let import = session::import_pi_session(&pi_path).unwrap();
+    let cow = session::import_as_cow(&import);
+
+    let jsonl_file = dir.join("native_session.jsonl");
+    session::save_jsonl(&jsonl_file, &cow).unwrap();
+    let loaded_jsonl = session::load_jsonl(&jsonl_file).unwrap();
+    assert_eq!(loaded_jsonl.id, cow.id);
+    assert_eq!(loaded_jsonl.model, cow.model);
+    assert_eq!(loaded_jsonl.provider, cow.provider);
+    assert_eq!(loaded_jsonl.messages.len(), cow.messages.len());
+    assert_eq!(loaded_jsonl.origin, cow.origin);
+
+    session::save(&dir, &cow).unwrap();
+
+    let loaded_by_id = session::load(&dir, &cow.id).unwrap();
+    assert_eq!(loaded_by_id.id, cow.id);
+
+    let list = session::list(&dir).unwrap();
+    assert!(!list.is_empty());
+    assert!(list.iter().any(|s| s.id == cow.id));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
