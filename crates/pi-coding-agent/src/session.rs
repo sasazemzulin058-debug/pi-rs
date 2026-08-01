@@ -90,17 +90,49 @@ pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
 }
 
 pub fn load(config_dir: &Path, id: &str) -> anyhow::Result<Session> {
-    let path = sessions_dir(config_dir).join(format!("{id}.json"));
-    let text =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let dir = sessions_dir(config_dir);
+    let json_path = dir.join(format!("{id}.json"));
+    if json_path.is_file() {
+        match std::fs::read_to_string(&json_path) {
+            Ok(text) => match serde_json::from_str::<Session>(&text) {
+                Ok(s) => return Ok(s),
+                Err(e) => {
+                    let jsonl_path = dir.join(format!("{id}.jsonl"));
+                    if !jsonl_path.is_file() {
+                        return Err(e).with_context(|| format!("parse {}", json_path.display()));
+                    }
+                }
+            },
+            Err(e) => {
+                let jsonl_path = dir.join(format!("{id}.jsonl"));
+                if !jsonl_path.is_file() {
+                    return Err(e).with_context(|| format!("read {}", json_path.display()));
+                }
+            }
+        }
+    }
+
+    let jsonl_path = dir.join(format!("{id}.jsonl"));
+    if jsonl_path.is_file() {
+        return load_jsonl(&jsonl_path);
+    }
+
+    let text = std::fs::read_to_string(&json_path)
+        .with_context(|| format!("read {}", json_path.display()))?;
     let s: Session = serde_json::from_str(&text)?;
     Ok(s)
 }
 
 pub fn save_jsonl(path: &Path, session: &Session) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
-    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("session.jsonl");
+    let tmp_path = parent.join(format!("{file_name}.tmp.{}", rand_u32()));
+
     let mut content = String::new();
     let header = serde_json::json!({
         "type": "session",
@@ -119,7 +151,15 @@ pub fn save_jsonl(path: &Path, session: &Session) -> anyhow::Result<()> {
         content.push('\n');
     }
 
-    std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
+    if let Err(e) = std::fs::write(&tmp_path, &content) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| format!("write {}", tmp_path.display()));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e)
+            .with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()));
+    }
     Ok(())
 }
 
@@ -493,17 +533,27 @@ pub fn list(config_dir: &Path) -> anyhow::Result<Vec<SessionSummary>> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
-    let mut out: Vec<SessionSummary> = Vec::new();
+    let mut by_id: std::collections::HashMap<String, SessionSummary> =
+        std::collections::HashMap::new();
     for entry in std::fs::read_dir(&dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path)?;
-        let s: Session = match serde_json::from_str(&text) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let ext = path.extension().and_then(|s| s.to_str());
+        let s: Session = match ext {
+            Some("json") => {
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                match serde_json::from_str(&text) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                }
+            }
+            Some("jsonl") => match load_jsonl(&path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            },
+            _ => continue,
         };
         let first_user = s
             .messages
@@ -515,15 +565,26 @@ pub fn list(config_dir: &Path) -> anyhow::Result<Vec<SessionSummary>> {
                 _ => None,
             })
             .unwrap_or_default();
-        out.push(SessionSummary {
+        let summary = SessionSummary {
             id: s.id,
             updated_ms: s.updated_ms,
             model: s.model,
             provider: s.provider,
             first_message: first_user,
             turns: s.messages.len(),
-        });
+        };
+        match by_id.entry(summary.id.clone()) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(summary);
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                if summary.updated_ms > e.get().updated_ms {
+                    e.insert(summary);
+                }
+            }
+        }
     }
+    let mut out: Vec<SessionSummary> = by_id.into_values().collect();
     out.sort_by_key(|s| std::cmp::Reverse(s.updated_ms));
     Ok(out)
 }
