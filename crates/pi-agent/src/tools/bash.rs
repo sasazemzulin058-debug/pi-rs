@@ -193,7 +193,6 @@ impl AgentTool for BashTool {
                 let mut buf = combined_collector.lock().await;
                 if is_err {
                     buf.extend_from_slice(b"[stderr] ");
-                    current_len += 9;
                 }
                 buf.append(&mut chunk);
                 current_len = buf.len();
