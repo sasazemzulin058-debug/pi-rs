@@ -9,9 +9,7 @@ use std::thread;
 use futures::StreamExt;
 use pi_ai::providers::openai::OpenAiProvider;
 use pi_ai::providers::Provider;
-use pi_ai::{
-    AssistantMessageEvent, Content, Context, Message, Model, StopReason, StreamOptions,
-};
+use pi_ai::{AssistantMessageEvent, Content, Context, Message, Model, StopReason, StreamOptions};
 use serde_json::json;
 
 #[tokio::test]
@@ -73,7 +71,8 @@ Connection: keep-alive\r\n\r\n";
                     "content": "Hello "
                 }
             }]
-        }).to_string();
+        })
+        .to_string();
 
         let chunk2 = json!({
             "id": "chatcmpl-123",
@@ -83,7 +82,8 @@ Connection: keep-alive\r\n\r\n";
                     "content": "world!"
                 }
             }]
-        }).to_string();
+        })
+        .to_string();
 
         let chunk3 = json!({
             "id": "chatcmpl-123",
@@ -100,7 +100,8 @@ Connection: keep-alive\r\n\r\n";
                     }]
                 }
             }]
-        }).to_string();
+        })
+        .to_string();
 
         let chunk4 = json!({
             "id": "chatcmpl-123",
@@ -116,7 +117,8 @@ Connection: keep-alive\r\n\r\n";
                 },
                 "finish_reason": "tool_calls"
             }]
-        }).to_string();
+        })
+        .to_string();
 
         let chunk5 = json!({
             "id": "chatcmpl-123",
@@ -126,7 +128,8 @@ Connection: keep-alive\r\n\r\n";
                 "completion_tokens": 20,
                 "total_tokens": 30
             }
-        }).to_string();
+        })
+        .to_string();
 
         let sse_body = format!(
             "data: {chunk1}\n\n\
