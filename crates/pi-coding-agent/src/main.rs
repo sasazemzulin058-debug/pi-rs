@@ -10,6 +10,8 @@ mod project;
 #[allow(dead_code)]
 mod session;
 mod system_prompt;
+// ponytail: Termux helpers are exercised by unit tests before CLI startup wiring.
+#[allow(dead_code)]
 mod termux;
 // ponytail: trust evaluation is staged before interactive persistence is wired.
 #[allow(dead_code)]
