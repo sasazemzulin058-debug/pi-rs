@@ -151,6 +151,34 @@ async fn glob_finds_files() {
     assert!(!text.contains("c.txt"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn bash_bounded_timeout_and_pipe_closure() {
+    use std::time::Instant;
+
+    let tool = bash::BashTool::new();
+    let start = Instant::now();
+    let res = tool
+        .execute(
+            "1",
+            json!({
+                "command": "sleep 30",
+                "timeout_ms": 200
+            }),
+        )
+        .await;
+
+    let elapsed = start.elapsed();
+    assert!(res.is_err(), "expected timeout error");
+    let err = res.unwrap_err();
+    assert!(err.contains("timed out"), "unexpected error string: {err}");
+    assert!(
+        elapsed.as_millis() < 5000,
+        "timeout took too long: {}ms",
+        elapsed.as_millis()
+    );
+}
+
 #[tokio::test]
 async fn bash_runs_simple_command() {
     let tool = bash::BashTool::new();

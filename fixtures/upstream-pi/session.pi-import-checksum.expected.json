@@ -1,0 +1,9 @@
+{
+  "case_id": "session.pi-import-checksum",
+  "oracle": "pi-rs-invariant",
+  "expected": {
+    "imported": true,
+    "source": "pi-mono",
+    "checksum_verified": true
+  }
+}

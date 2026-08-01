@@ -1,0 +1,9 @@
+{
+  "case_id": "session.pi-cow-provenance",
+  "oracle": "pi-rs-invariant",
+  "expected": {
+    "cow_copied": true,
+    "provenance_header": "copied-from-upstream",
+    "mutation_isolated": true
+  }
+}

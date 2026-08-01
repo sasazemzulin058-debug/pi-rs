@@ -63,10 +63,21 @@ impl ProviderFactory for FakeProviderFactory {
         &self,
         _model: &Model,
         _context: &Context,
-        _options: &StreamOptions,
+        options: &StreamOptions,
     ) -> Result<AssistantMessageEventStream> {
-        let stream_events: Vec<Result<crate::types::AssistantMessageEvent>> =
-            self.events.iter().cloned().map(Ok).collect();
-        Ok(Box::pin(futures::stream::iter(stream_events)))
+        let events = self.events.clone();
+        let cancel = options.cancel.clone();
+        let s = async_stream::stream! {
+            for event in events {
+                if let Some(ref c) = cancel {
+                    if c.is_cancelled() {
+                        yield Err(crate::error::Error::Cancelled);
+                        return;
+                    }
+                }
+                yield Ok(event);
+            }
+        };
+        Ok(Box::pin(s))
     }
 }

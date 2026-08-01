@@ -1,0 +1,9 @@
+{
+  "case_id": "provider.fake-stream-cancel",
+  "oracle": "pi-rs-invariant",
+  "expected": {
+    "stream_cancelled": true,
+    "events_emitted": ["start", "delta", "cancelled"],
+    "socket_opened": false
+  }
+}

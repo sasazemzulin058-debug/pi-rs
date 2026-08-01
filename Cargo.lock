@@ -975,6 +975,7 @@ dependencies = [
  "futures",
  "glob",
  "ignore",
+ "libc",
  "pi-ai",
  "regex",
  "reqwest",

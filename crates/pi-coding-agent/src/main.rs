@@ -8,6 +8,76 @@ mod print_mode;
 mod project;
 mod session;
 mod system_prompt;
+mod termux;
+mod trust;
+
+#[cfg(test)]
+mod tests {
+    use super::project::load_project_prompt;
+    use super::termux::{is_termux, termux_shell, termux_tmpdir};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pi-rs-{prefix}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_load_project_prompt_nested_ordering() {
+        let root = temp_dir("project-prompt-nested");
+        let sub = root.join("child").join("nested");
+        fs::create_dir_all(&sub).unwrap();
+
+        fs::write(root.join("AGENTS.md"), "root agents").unwrap();
+        fs::write(root.join("CLAUDE.md"), "root claude").unwrap();
+        fs::write(sub.join("AGENTS.md"), "child agents").unwrap();
+
+        let prompt = load_project_prompt(&sub);
+
+        let child_agents_pos = prompt.find("child agents").unwrap();
+        let root_agents_pos = prompt.find("root agents").unwrap();
+        let root_claude_pos = prompt.find("root claude").unwrap();
+
+        assert!(
+            child_agents_pos < root_agents_pos,
+            "child AGENTS.md should come before root AGENTS.md"
+        );
+        assert!(
+            root_agents_pos < root_claude_pos,
+            "root AGENTS.md should come before root CLAUDE.md"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_termux_env_detection() {
+        let termux_detected = is_termux();
+        let sh_path = termux_shell();
+        let tmp_path = termux_tmpdir();
+
+        if std::env::var("PREFIX")
+            .map(|p| p.starts_with("/data/data/com.termux/files/usr"))
+            .unwrap_or(false)
+        {
+            assert!(termux_detected);
+            assert!(sh_path.to_string_lossy().contains("com.termux"));
+        } else {
+            assert!(!termux_detected);
+        }
+
+        assert!(!sh_path.as_os_str().is_empty());
+        assert!(!tmp_path.as_os_str().is_empty());
+    }
+}
 
 use std::sync::Arc;
 
@@ -20,7 +90,7 @@ use crate::permission::{CliPermission, Mode};
 #[command(name = "pi-rs", version, about = "Pi coding agent (Rust port)")]
 struct Cli {
     /// One-shot prompt — run agent to completion and exit.
-    #[arg(short, long)]
+    #[arg(short, long, alias = "print")]
     prompt: Option<String>,
 
     /// Model identifier. Overrides PI_MODEL.

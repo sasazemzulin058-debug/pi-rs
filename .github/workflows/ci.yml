@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,7 +49,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tests/contract -p "test_*.py"
 
-      - name: Validate fixture manifest (M0 validation - permits pending capture)
+      - name: Validate fixture manifest (M0 validation)
         run: |
           python3 scripts/validate-fixture-manifest
 
@@ -68,4 +69,6 @@ jobs:
       - name: cargo deny check
         run: cargo deny check
       - name: cargo audit
-        run: cargo audit --ignore RUSTSEC-2026-0204 --ignore RUSTSEC-2026-0185 --ignore RUSTSEC-2026-0190
+        run: >-
+          cargo audit --ignore RUSTSEC-2026-0204 --ignore RUSTSEC-2026-0185
+          --ignore RUSTSEC-2026-0190

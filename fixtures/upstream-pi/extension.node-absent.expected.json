@@ -1,0 +1,9 @@
+{
+  "case_id": "extension.node-absent",
+  "oracle": "pi-rs-invariant",
+  "expected": {
+    "node_available": false,
+    "extension_fallback": "disabled",
+    "core_agent_functional": true
+  }
+}

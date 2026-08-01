@@ -142,3 +142,56 @@ async fn test_agent_loop_zero_turn_limit() {
     let run = result.unwrap();
     assert!(run.stopped_at_turn_limit);
 }
+
+#[tokio::test]
+async fn test_agent_loop_tool_execution() {
+    use pi_agent::tools::write::WriteTool;
+    use pi_agent::types::AgentTool;
+
+    let test_dir = std::env::temp_dir().join(format!("pi_agent_test_{}", std::process::id()));
+    let test_path = test_dir.join("test_write.txt");
+    let test_path_str = test_path.to_string_lossy().to_string();
+
+    let model = test_model();
+    let events = vec![
+        AssistantMessageEvent::Done {
+            reason: StopReason::ToolUse,
+            message: test_assistant_message(
+                vec![Content::ToolCall {
+                    id: "call_1".into(),
+                    name: "write".into(),
+                    arguments: serde_json::json!({
+                        "path": test_path_str,
+                        "content": "hello world"
+                    }),
+                }],
+                StopReason::ToolUse,
+            ),
+        },
+        AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: test_assistant_message(vec![], StopReason::Stop),
+        },
+    ];
+    let factory = Arc::new(FakeProviderFactory::new(events));
+    let tool: Arc<dyn AgentTool> = Arc::new(WriteTool);
+    let cfg = AgentConfig::new(model, "system")
+        .with_provider_factory(factory)
+        .with_tools(vec![tool]);
+
+    let result = run_agent(&cfg, Message::user_text("hello"), None).await;
+    assert!(result.is_ok());
+    let run = result.unwrap();
+
+    let tool_result_found = run.messages.iter().any(|msg| match msg {
+        Message::ToolResult(tr) => {
+            tr.tool_call_id == "call_1" && tr.tool_name == "write" && !tr.is_error
+        }
+        _ => false,
+    });
+    assert!(tool_result_found);
+
+    if test_dir.exists() {
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+}
