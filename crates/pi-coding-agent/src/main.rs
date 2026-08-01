@@ -6,9 +6,13 @@ mod interactive;
 mod permission;
 mod print_mode;
 mod project;
+// ponytail: session import/JSONL APIs are library seams pending CLI wiring; remove once wired.
+#[allow(dead_code)]
 mod session;
 mod system_prompt;
 mod termux;
+// ponytail: trust evaluation is staged before interactive persistence is wired.
+#[allow(dead_code)]
 mod trust;
 
 #[cfg(test)]
