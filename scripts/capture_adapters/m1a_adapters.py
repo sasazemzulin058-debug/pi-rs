@@ -3,6 +3,7 @@ import sys
 import json
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Dict, Any
 
 # Ensure parent scripts directory is importable
@@ -40,7 +41,43 @@ def capture_provider_openai_chat_fragmented_sse(upstream_root: str) -> Dict[str,
     raise NotImplementedError("real upstream capture required: provider.openai-chat.fragmented-sse")
 
 def capture_tool_read_bounds(upstream_root: str) -> Dict[str, Any]:
-    raise NotImplementedError("real upstream capture required: tool.read.bounds")
+    """Capture case tool.read.bounds by invoking upstream createReadToolDefinition on disposable fixture."""
+    lines = [f"line {i}" for i in range(1, 21)]
+    fixture_content = "\n".join(lines)
+    with tempfile.TemporaryDirectory(prefix="pi-upstream-read-") as temp_dir:
+        fixture_path = Path(temp_dir) / "fixture.txt"
+        script_path = Path(temp_dir) / "capture-read.ts"
+        fixture_path.write_text(fixture_content, encoding="utf-8")
+        script_path.write_text(
+            f"""import {{ createReadToolDefinition }} from {json.dumps(upstream_root + '/packages/coding-agent/src/core/tools/read.ts')};
+
+const tool = createReadToolDefinition({json.dumps(temp_dir)});
+const path = {json.dumps(str(fixture_path))};
+const success = await tool.execute("read-1", {{ path, offset: 5, limit: 3 }}, undefined, undefined, undefined);
+let error_case;
+try {{
+  await tool.execute("read-2", {{ path, offset: 100, limit: 5 }}, undefined, undefined, undefined);
+}} catch (error) {{
+  error_case = {{ error: String(error) }};
+}}
+console.log(JSON.stringify({{ success, error_case }}));
+""",
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            ["node", "--import", "tsx/esm", str(script_path)],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"upstream tool.read.bounds execution failed ({res.returncode}): {res.stderr.strip()}"
+            )
+        try:
+            return normalize_structure(json.loads(res.stdout.strip()))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"upstream tool.read.bounds returned invalid JSON: {res.stdout!r}") from exc
 
 def capture_tool_bash_cancel_descendants(upstream_root: str) -> Dict[str, Any]:
     raise NotImplementedError("real upstream capture required: tool.bash.cancel-descendants")
