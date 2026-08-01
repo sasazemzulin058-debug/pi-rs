@@ -37,13 +37,10 @@ jobs:
           npm cache clean --force
           npm ci
           npm run hydrate-model-data --workspace=@earendil-works/pi-ai
-          node - <<'NODE'
-          const fs = require('fs');
-          const path = 'node_modules/gaxios/package.json';
-          const raw = fs.readFileSync(path, 'utf8');
-          JSON.parse(raw);
-          console.log(`validated ${path}`);
-          NODE
+          npm pack gaxios@7.1.4 --pack-destination /tmp/gaxios-repair
+          tar -xzf /tmp/gaxios-repair/gaxios-7.1.4.tgz -C /tmp/gaxios-repair
+          cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json
+          node -e "JSON.parse(require('fs').readFileSync('node_modules/gaxios/package.json', 'utf8')); console.log('validated node_modules/gaxios/package.json')"
           
       - name: Run reference capture
         env:
