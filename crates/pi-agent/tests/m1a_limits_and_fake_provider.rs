@@ -220,7 +220,8 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
         }
     }
 
-    let test_dir = std::env::temp_dir().join(format!("pi_agent_serial_test_{}", std::process::id()));
+    let test_dir =
+        std::env::temp_dir().join(format!("pi_agent_serial_test_{}", std::process::id()));
     let test_path = test_dir.join("serial_write.txt");
     let test_path_str = test_path.to_string_lossy().to_string();
 
