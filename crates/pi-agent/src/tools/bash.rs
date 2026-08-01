@@ -104,7 +104,9 @@ impl AgentTool for BashTool {
             .filter(|s| {
                 let trimmed = s.trim();
                 !trimmed.is_empty()
-                    && (trimmed == "sh" || trimmed == "bash" || is_executable(std::path::Path::new(trimmed)))
+                    && (trimmed == "sh"
+                        || trimmed == "bash"
+                        || is_executable(std::path::Path::new(trimmed)))
             })
             .unwrap_or_else(|| "sh".to_string());
 
