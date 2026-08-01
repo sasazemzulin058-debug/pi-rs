@@ -15,6 +15,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use crate::config::AppConfig;
+use crate::session::Session;
 use crate::system_prompt::build_system_prompt;
 
 pub async fn run_print(
@@ -35,11 +36,14 @@ pub async fn run_print(
     .with_permission(permission);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let user = Message::user_text(prompt);
-    let history = initial.map(|session| {
-        let mut messages = session.messages;
+    let mut session = initial.unwrap_or_else(|| Session::new(&app.model));
+    let history = if session.messages.is_empty() {
+        None
+    } else {
+        let mut messages = session.messages.clone();
         messages.push(user.clone());
-        messages
-    });
+        Some(messages)
+    };
 
     let cfg_cloned = cfg.clone();
     let handle = tokio::spawn(async move {
@@ -58,6 +62,8 @@ pub async fn run_print(
     }
 
     let res = handle.await??;
+    session.replace_messages(res.messages.clone());
+    crate::session::save_jsonl(&app.config_dir.join("sessions").join(format!("{}.jsonl", session.id)), &session)?;
     if json_mode {
         emit_json(&json!({
             "type": "agent_end",
