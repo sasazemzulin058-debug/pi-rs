@@ -39,7 +39,7 @@ jobs:
       - name: Install upstream Pi dependencies
         run: |
           cd upstream-pi-mono
-          bun install --frozen-lockfile
+          npm ci
           
       - name: Run reference capture
         env:
