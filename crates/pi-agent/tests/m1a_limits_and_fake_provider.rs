@@ -268,7 +268,9 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
     assert_eq!(run.messages.len(), 4);
 
     match &run.messages[0] {
-        Message::User(u) => assert_eq!(u.content, vec![Content::text("run serial tool")]),
+        Message::User { content, .. } => {
+            assert_eq!(content, &vec![Content::text("run serial tool")]);
+        }
         _ => panic!("expected User message at index 0"),
     }
     match &run.messages[1] {
