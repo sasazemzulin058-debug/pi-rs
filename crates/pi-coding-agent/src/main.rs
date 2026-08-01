@@ -190,8 +190,16 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(CliPermission::new(Mode::Interactive))
     };
 
+    let cwd = std::env::current_dir().ok();
+    let explicitly_trusted = std::env::var("PI_TRUST_PROJECT").as_deref() == Ok("1");
+    let trust_decision = if explicitly_trusted {
+        crate::trust::TrustDecision::Trusted
+    } else {
+        crate::trust::evaluate_trust(cwd.as_deref(), false)
+    };
+
     match (cli.prompt, cli.resume) {
-        (Some(p), _) => print_mode::run_print(&app, p, permission, json).await,
+        (Some(p), _) => print_mode::run_print(&app, p, permission, json, trust_decision).await,
         (None, resume_id) => {
             let initial = match resume_id {
                 Some(id) => match session::load(&app.config_dir, &id) {
@@ -203,7 +211,7 @@ async fn main() -> anyhow::Result<()> {
                 },
                 None => None,
             };
-            interactive::run_interactive(&app, permission, initial).await
+            interactive::run_interactive(&app, permission, initial, trust_decision).await
         }
     }
 }
