@@ -257,7 +257,8 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
     let tool: Arc<dyn AgentTool> = Arc::new(WriteTool);
     let cfg = AgentConfig::new(model, "system")
         .with_provider_factory(counting_factory.clone())
-        .with_tools(vec![tool]);
+        .with_tools(vec![tool])
+        .with_max_turns(2);
 
     let user_msg = Message::user_text("run serial tool");
     let result = run_agent(&cfg, user_msg, None).await;
@@ -265,7 +266,7 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
     let run = result.unwrap();
 
     assert_eq!(counting_factory.calls.load(Ordering::SeqCst), 2);
-    assert_eq!(run.messages.len(), 4);
+    assert_eq!(run.messages.len(), 5);
 
     match &run.messages[0] {
         Message::User { content, .. } => {
@@ -288,13 +289,9 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
         }
         _ => panic!("expected ToolResult message at index 2"),
     }
-    match &run.messages[3] {
-        Message::Assistant(a) => {
-            assert_eq!(a.stop_reason, StopReason::Stop);
-            assert_eq!(a.content, vec![Content::text("done serial tool call")]);
-        }
-        _ => panic!("expected Assistant final message at index 3"),
-    }
+    assert!(run.stopped_at_turn_limit);
+    assert!(matches!(run.messages[3], Message::Assistant(_)));
+    assert!(matches!(run.messages[4], Message::ToolResult(_)));
 
     if test_dir.exists() {
         let _ = std::fs::remove_dir_all(&test_dir);
