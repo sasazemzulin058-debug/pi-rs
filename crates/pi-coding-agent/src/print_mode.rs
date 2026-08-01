@@ -44,7 +44,9 @@ pub async fn run_print(
     let cfg_cloned = cfg.clone();
     let handle = tokio::spawn(async move {
         match history {
-            Some(messages) => pi_agent::run_agent_with_history(&cfg_cloned, messages, Some(tx)).await,
+            Some(messages) => {
+                pi_agent::run_agent_with_history(&cfg_cloned, messages, Some(tx)).await
+            }
             None => run_agent(&cfg_cloned, user, Some(tx)).await,
         }
     });
