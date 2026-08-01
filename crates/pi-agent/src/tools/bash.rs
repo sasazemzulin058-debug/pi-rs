@@ -11,6 +11,34 @@ use tokio::time::{timeout, Duration};
 
 use crate::types::{AgentTool, AgentToolResult};
 
+async fn cleanup_child(
+    mut child: tokio::process::Child,
+    stdout_task: tokio::task::JoinHandle<()>,
+    stderr_task: tokio::task::JoinHandle<()>,
+    collector: tokio::task::JoinHandle<()>,
+) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = child.kill().await;
+
+    stdout_task.abort();
+    stderr_task.abort();
+
+    // ponytail: 200ms bounded reap ceiling; upgrade to configurable grace period if slow process reaping requires it.
+    let _ = timeout(Duration::from_millis(200), async {
+        let _ = child.wait().await;
+        let _ = stdout_task.await;
+        let _ = stderr_task.await;
+        let _ = collector.await;
+    })
+    .await;
+}
+
 fn is_executable(path: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
@@ -220,29 +248,11 @@ impl AgentTool for BashTool {
                 s
             }
             Ok(Err(e)) => {
-                #[cfg(unix)]
-                if let Some(pid) = child.id() {
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGKILL);
-                    }
-                }
-                let _ = child.kill().await;
-                let _ = stdout_task.await;
-                let _ = stderr_task.await;
-                let _ = collector.await;
+                cleanup_child(child, stdout_task, stderr_task, collector).await;
                 return Err(format!("wait: {e}"));
             }
             Err(_) => {
-                #[cfg(unix)]
-                if let Some(pid) = child.id() {
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGKILL);
-                    }
-                }
-                let _ = child.kill().await;
-                let _ = stdout_task.await;
-                let _ = stderr_task.await;
-                let _ = collector.await;
+                cleanup_child(child, stdout_task, stderr_task, collector).await;
                 return Err(format!("command timed out after {timeout_ms}ms"));
             }
         };
