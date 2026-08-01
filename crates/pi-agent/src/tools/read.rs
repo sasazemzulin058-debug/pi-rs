@@ -43,15 +43,65 @@ impl AgentTool for ReadTool {
             .await
             .map_err(|e| format!("read {path}: {e}"))?;
         let lines: Vec<&str> = text.lines().collect();
-        let start = offset.map(|o| o.saturating_sub(1)).unwrap_or(0);
-        let end = limit
-            .map(|l| std::cmp::min(start + l, lines.len()))
-            .unwrap_or(lines.len());
 
-        let mut buf = String::new();
-        for (i, line) in lines[start..end].iter().enumerate() {
-            buf.push_str(&format!("{:>5}\t{}\n", start + i + 1, line));
+        if lines.is_empty() {
+            return Ok(AgentToolResult::text(""));
         }
+
+        // Standard Pi bounds defaults: max 400 lines, max 50KB total output
+        let max_lines = limit.unwrap_or(400);
+        let start = offset.map(|o| o.saturating_sub(1)).unwrap_or(0);
+
+        if start >= lines.len() {
+            return Err(format!(
+                "offset {start} is beyond end of file (file has {} lines)",
+                lines.len()
+            ));
+        }
+
+        let max_end = start.saturating_add(max_lines);
+        let end = std::cmp::min(max_end, lines.len());
+
+        let max_bytes = 50 * 1024;
+        let mut buf = String::new();
+        let mut lines_read = 0;
+        let mut truncated = false;
+
+        for (i, line) in lines[start..end].iter().enumerate() {
+            let line_fmt = format!("{:>5}\t{}\n", start + i + 1, line);
+            if buf.len() + line_fmt.len() > max_bytes {
+                truncated = true;
+                break;
+            }
+            buf.push_str(&line_fmt);
+            lines_read += 1;
+        }
+
+        if start + lines_read < lines.len() {
+            truncated = true;
+        }
+
+        if truncated {
+            let remaining = lines.len().saturating_sub(start + lines_read);
+            if remaining > 0 {
+                let suffix = format!("... ({} more lines, use offset to continue)\n", remaining);
+                if buf.len() + suffix.len() <= max_bytes {
+                    buf.push_str(&suffix);
+                } else if buf.len() < max_bytes {
+                    // Fits at least truncated suffix or clip buffer to remain strictly <= 50 KiB total output.
+                    let available = max_bytes.saturating_sub(suffix.len());
+                    if buf.len() > available {
+                        let mut cutoff = available;
+                        while cutoff > 0 && !buf.is_char_boundary(cutoff) {
+                            cutoff -= 1;
+                        }
+                        buf.truncate(cutoff);
+                    }
+                    buf.push_str(&suffix);
+                }
+            }
+        }
+
         Ok(AgentToolResult::text(buf))
     }
 }

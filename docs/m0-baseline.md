@@ -1,6 +1,6 @@
 # M0.0 — Untouched fork baseline
 
-> Historical audit evidence captured before the GitHub Actions-only verification policy. This is not a current CI gate; the canonical baseline must be reproduced and attached to a GitHub Actions run before M0 closes.
+> Historical audit evidence captured before the GitHub Actions-only verification policy. This is not a current CI gate; official canonical baseline execution and artifacts are CI-owned and attached to GitHub Actions runs (`.github/workflows/baseline.yml`). Local build/test results below are retained solely for provenance context.
 
 **Date:** 2026-07-27  
 **Fork base:** `nktkt/pi` `v1.2.0`  
@@ -8,10 +8,32 @@
 **Root commit:** `ed1d18da31d53c34b60238f06473c7b162dc30f8`  
 **History:** full (unshallowed from `nktkt` remote before baseline capture)
 
-## Environment
+## CI Reproducibility & Workflow
+
+Canonical verification workflow: `.github/workflows/baseline.yml`
+
+To trigger CI baseline verification:
+
+```bash
+gh workflow run baseline.yml
+```
+
+CI runs the following canonical baseline commands against target `ubuntu-latest` on commit `0808c756fa1991940def7f0f9837464417149419`:
+
+```bash
+cargo build --workspace --all-targets
+cargo build --workspace --release
+cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+## Historical Local Environment (Non-Canonical / Audited)
+
+> **Note:** The local environment results recorded below are non-canonical historical audit records. All official gate validations are strictly CI-owned.
 
 | Variable | Value |
-|---|---|
+| --- | --- |
 | `rustc` | `rustc 1.96.1 (31fca3adb 2026-06-26) (built from a source tarball)` |
 | `cargo` | `cargo 1.96.1 (356927216 2026-06-26) (built from a source tarball)` |
 | `uname` | `Linux localhost 6.1.118-android14-11-o-g64180ab070e5 #1 SMP PREEMPT Fri Dec 12 12:32:56 UTC 2025 aarch64 Android` |
@@ -23,7 +45,7 @@
 ## Baseline commands (untouched commit)
 
 | Command | Result | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `cargo fmt --check` | passed | No formatting issues |
 | `cargo clippy --workspace --all-targets -- -D warnings` | passed | No warnings |
 | `cargo test --workspace` | passed | 5 tests: 4 json_mode + 1 session_smoke |
@@ -45,4 +67,4 @@ The initial import used `--depth=1` and produced a shallow clone. Before baselin
 
 ## Disposition
 
-All four baseline commands pass on the untouched fork commit. No inherited failures to disposition. The workspace compiles and tests cleanly on Termux-native `aarch64` with Rust 1.96.1.
+All four baseline commands pass on the untouched fork commit. No inherited failures to disposition. The workspace compiles and tests cleanly on Termux-native `aarch64` with Rust 1.96.1. Official verification is owned by GitHub Actions CI.

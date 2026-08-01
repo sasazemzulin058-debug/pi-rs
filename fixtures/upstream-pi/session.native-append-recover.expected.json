@@ -1,0 +1,9 @@
+{
+  "case_id": "session.native-append-recover",
+  "oracle": "pi-rs-invariant",
+  "expected": {
+    "recovered": true,
+    "source": "native",
+    "corrupted_tail_truncated": true
+  }
+}

@@ -31,3 +31,6 @@ shell-words = { workspace = true }
 reqwest = { workspace = true }
 similar = "2.7"
 regex = "1.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

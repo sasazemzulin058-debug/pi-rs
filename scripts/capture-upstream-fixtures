@@ -8,6 +8,8 @@ import datetime
 
 # Adjust path to import from scripts/
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hashlib
+from capture_adapters.m1a_adapters import ADAPTERS
 from contract_fixture_lib import load_manifest, MANIFEST_PATH
 
 def get_tool_version(args):
@@ -23,22 +25,26 @@ def main():
     args = parser.parse_args()
     
     print(f"Capturing fixtures for milestone: {args.milestone}")
-    
+
     try:
         manifest = load_manifest()
     except Exception as e:
         print(f"Failed to load manifest: {e}")
         sys.exit(1)
-        
+
     req_cases = manifest.get("requiredCaseIds", {})
     if args.milestone not in req_cases:
         print(f"Error: Milestone '{args.milestone}' is not defined in manifest requiredCaseIds")
         sys.exit(1)
         
     cases_catalog = manifest.get("cases", {})
-    selected = [cid for cid in req_cases[args.milestone] if cases_catalog.get(cid, {}).get("oracle") == "upstream-pi"]
+    upstream_selected = [cid for cid in req_cases[args.milestone] if cases_catalog.get(cid, {}).get("oracle") == "upstream-pi"]
+    invariant_selected = [cid for cid in req_cases[args.milestone] if cases_catalog.get(cid, {}).get("oracle") == "pi-rs-invariant"]
 
-    if not selected:
+    for cid in invariant_selected:
+        print(f"Skipping pi-rs-invariant case: {cid} (handled by invariant spec stubs)")
+
+    if not upstream_selected:
         print(f"No upstream-pi cases selected for milestone '{args.milestone}'; nothing to capture.", file=sys.stderr)
         sys.exit(0)
 
@@ -47,11 +53,71 @@ def main():
         print("Error: PI_UPSTREAM_ROOT environment variable must point to the checked-out Pi reference directory before capture.", file=sys.stderr)
         sys.exit(2)
 
-    # This entrypoint deliberately does not fabricate fixtures. A real adapter must
-    # execute each selected case and write raw/normalized artifacts plus provenance.
-    print(f"Reference adapter is not implemented; refusing to mark fixtures captured.", file=sys.stderr)
-    print("Selected upstream cases to capture: " + ", ".join(selected), file=sys.stderr)
-    sys.exit(3)
+    fixtures_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures", "upstream-pi")
+    hashes = []
+    staged_updates = []
+
+    import tempfile
+    import shutil
+
+    with tempfile.TemporaryDirectory(prefix="capture_stage_") as temp_stage_dir:
+        for cid in upstream_selected:
+            adapter = ADAPTERS.get(cid)
+            if not adapter:
+                print(f"Error: No adapter implemented for case '{cid}'", file=sys.stderr)
+                sys.exit(1)
+
+            print(f"Capturing upstream case: {cid}...")
+            try:
+                res_data = adapter(capture_root)
+            except Exception as exc:
+                print(f"Capture failed for {cid}: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+            expected_temp_path = os.path.join(temp_stage_dir, f"{cid}.expected.json")
+            with open(expected_temp_path, "w") as f:
+                json.dump(res_data, f, indent=2)
+                f.write("\n")
+
+            content_bytes = json.dumps(res_data, sort_keys=True).encode("utf-8")
+            raw_hash = hashlib.sha256(content_bytes).hexdigest()
+            hash_temp_path = os.path.join(temp_stage_dir, f"{cid}.raw-hash.txt")
+            with open(hash_temp_path, "w") as f:
+                f.write(f"{raw_hash}\n")
+
+            hashes.append(raw_hash)
+            cases_catalog[cid]["captured"] = True
+
+            staged_updates.append((expected_temp_path, os.path.join(fixtures_dir, f"{cid}.expected.json")))
+            staged_updates.append((hash_temp_path, os.path.join(fixtures_dir, f"{cid}.raw-hash.txt")))
+
+        capture_env = manifest.get("captureEnvironment", {})
+        capture_env["host"] = get_tool_version(["uname", "-m"]) or "unknown"
+        capture_env["nodeVersion"] = get_tool_version(["node", "--version"]) or "unknown"
+        capture_env["bunVersion"] = get_tool_version(["bun", "--version"]) or "unknown"
+        capture_env["capturedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        combined_hash = hashlib.sha256("".join(sorted(hashes)).encode("utf-8")).hexdigest()
+        capture_env["digest"] = f"sha256:{combined_hash}"
+        all_milestone_cases = req_cases[args.milestone]
+        captured_cases = [cid for cid in all_milestone_cases if cases_catalog.get(cid, {}).get("captured")]
+        capture_env["captureStatus"] = (
+            "completed" if len(captured_cases) == len(all_milestone_cases) else "partial"
+        )
+
+        manifest_temp_path = os.path.join(temp_stage_dir, "manifest.json")
+        with open(manifest_temp_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+            f.write("\n")
+
+        # All adapters succeeded — commit/publish staged changes to destination
+        for src, dst in staged_updates:
+            shutil.copy2(src, dst)
+
+        shutil.copy2(manifest_temp_path, MANIFEST_PATH)
+
+    print(f"Reference capture complete for milestone {args.milestone}.")
+
 
 if __name__ == "__main__":
     main()

@@ -22,12 +22,16 @@ pub async fn run_print(
     prompt: String,
     permission: Arc<dyn PermissionPolicy>,
     json_mode: bool,
+    trust_decision: crate::trust::TrustDecision,
 ) -> anyhow::Result<()> {
-    let cfg = AgentConfig::new(app.model.clone(), build_system_prompt(&app.config_dir))
-        .with_tools(default_tools())
-        .with_max_turns(app.max_turns)
-        .with_thinking(app.thinking_level)
-        .with_permission(permission);
+    let cfg = AgentConfig::new(
+        app.model.clone(),
+        build_system_prompt(&app.config_dir, trust_decision),
+    )
+    .with_tools(default_tools())
+    .with_max_turns(app.max_turns)
+    .with_thinking(app.thinking_level)
+    .with_permission(permission);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let user = Message::user_text(prompt);
 

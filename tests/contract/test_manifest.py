@@ -16,6 +16,11 @@ class TestFixtureManifest(unittest.TestCase):
             
         errors = validate_manifest(manifest)
         self.assertEqual(errors, [], f"Manifest contains validation errors:\n" + "\n".join(errors))
+
+    def test_m0_validation(self):
+        manifest = load_manifest()
+        errors = validate_manifest(manifest, milestone="M0")
+        self.assertEqual(errors, [], f"M0 manifest validation contains errors:\n" + "\n".join(errors))
         
     def test_m1a_cases_are_pending(self):
         manifest = load_manifest()

@@ -9,13 +9,14 @@ mod session;
 use pi_ai::{Message, Model};
 
 fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "pi-rs-session-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("pi-rs-session-test-{pid}-{nanos}-{count}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -37,6 +38,8 @@ fn save_and_load_roundtrip() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].id, s.id);
     assert_eq!(list[0].turns, 1);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -71,4 +74,6 @@ fn save_crash_safe_temp_file_cleanup_and_overwrite() {
         let name = path.file_name().unwrap().to_str().unwrap();
         assert!(!name.contains(".tmp."), "found leftover temp file: {name}");
     }
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

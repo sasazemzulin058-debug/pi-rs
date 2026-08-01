@@ -40,6 +40,7 @@ jobs:
       - name: Run reference capture
         env:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python3 scripts/capture-upstream-fixtures --milestone "${{ github.event.inputs.milestone }}"
           
