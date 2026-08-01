@@ -44,12 +44,12 @@ def capture_tool_read_bounds(upstream_root: str) -> Dict[str, Any]:
     """Capture case tool.read.bounds by invoking upstream createReadToolDefinition on disposable fixture."""
     lines = [f"line {i}" for i in range(1, 21)]
     fixture_content = "\n".join(lines)
-    with tempfile.TemporaryDirectory(prefix="pi-upstream-read-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="capture-read-", dir=upstream_root) as temp_dir:
         fixture_path = Path(temp_dir) / "fixture.txt"
         script_path = Path(temp_dir) / "capture-read.ts"
         fixture_path.write_text(fixture_content, encoding="utf-8")
         script_path.write_text(
-            f"""import {{ createReadToolDefinition }} from {json.dumps(upstream_root + '/packages/coding-agent/src/core/tools/read.ts')};
+            f"""import {{ createReadToolDefinition }} from "../packages/coding-agent/src/core/tools/read.ts";
 
 const tool = createReadToolDefinition({json.dumps(temp_dir)});
 const path = {json.dumps(str(fixture_path))};
