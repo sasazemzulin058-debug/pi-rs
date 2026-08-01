@@ -1,6 +1,9 @@
 //! Tests for Pi session import, SHA-256 checksum verification, and import-to-COW integration.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[path = "../src/session.rs"]
 #[allow(dead_code)]
@@ -9,13 +12,13 @@ mod session;
 use pi_ai::Message;
 
 fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "pi-rs-session-import-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let pid = std::process::id();
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("pi-rs-session-import-test-{pid}-{count}-{nanos}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -46,6 +49,8 @@ fn import_pi_session_jsonl_roundtrip() {
     assert_eq!(import.provider, "anthropic");
     assert_eq!(import.messages.len(), 2);
     assert_eq!(import.checksum_sha256.len(), 64);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -60,6 +65,8 @@ fn verify_checksum_matches_and_detects_mutation() {
     // Mutate file
     std::fs::write(&path, format!("{PI_V3_JSONL_FIXTURE}\n")).unwrap();
     assert!(!session::verify_pi_checksum(&path, &import.checksum_sha256).unwrap());
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -85,6 +92,8 @@ fn import_as_cow_creates_isolated_native_session() {
 
     let loaded = session::load(&dir, &cow.id).unwrap();
     assert_eq!(loaded.origin, cow.origin);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -113,6 +122,8 @@ fn fixture_contract_session_pi_import_checksum() {
     );
     assert_eq!(report["imported"], expected["expected"]["imported"]);
     assert_eq!(report["source"], expected["expected"]["source"]);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -161,4 +172,6 @@ fn fixture_contract_session_pi_cow_provenance() {
         report["provenance_header"],
         expected["expected"]["provenance_header"]
     );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
