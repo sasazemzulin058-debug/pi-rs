@@ -183,7 +183,6 @@ impl AgentTool for BashTool {
         let combined = Arc::new(Mutex::new(Vec::new()));
         let combined_collector = combined.clone();
         let collector = tokio::spawn(async move {
-            let mut current_len = 0;
             let mut truncated = false;
 
             while let Some((is_err, mut chunk)) = rx.recv().await {
@@ -195,7 +194,7 @@ impl AgentTool for BashTool {
                     buf.extend_from_slice(b"[stderr] ");
                 }
                 buf.append(&mut chunk);
-                current_len = buf.len();
+                let current_len = buf.len();
 
                 if current_len > max_output_bytes {
                     let mut truncated_len = max_output_bytes;
