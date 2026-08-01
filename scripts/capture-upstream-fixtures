@@ -55,47 +55,62 @@ def main():
 
     fixtures_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures", "upstream-pi")
     hashes = []
+    staged_updates = []
 
-    for cid in upstream_selected:
-        adapter = ADAPTERS.get(cid)
-        if not adapter:
-            print(f"Error: No adapter implemented for case '{cid}'", file=sys.stderr)
-            sys.exit(1)
+    import tempfile
+    import shutil
 
-        print(f"Capturing upstream case: {cid}...")
-        try:
-            res_data = adapter(capture_root)
-        except Exception as exc:
-            print(f"Capture failed for {cid}: {exc}", file=sys.stderr)
-            sys.exit(1)
+    with tempfile.TemporaryDirectory(prefix="capture_stage_") as temp_stage_dir:
+        for cid in upstream_selected:
+            adapter = ADAPTERS.get(cid)
+            if not adapter:
+                print(f"Error: No adapter implemented for case '{cid}'", file=sys.stderr)
+                sys.exit(1)
 
-        expected_path = os.path.join(fixtures_dir, f"{cid}.expected.json")
-        with open(expected_path, "w") as f:
-            json.dump(res_data, f, indent=2)
+            print(f"Capturing upstream case: {cid}...")
+            try:
+                res_data = adapter(capture_root)
+            except Exception as exc:
+                print(f"Capture failed for {cid}: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+            expected_temp_path = os.path.join(temp_stage_dir, f"{cid}.expected.json")
+            with open(expected_temp_path, "w") as f:
+                json.dump(res_data, f, indent=2)
+                f.write("\n")
+
+            content_bytes = json.dumps(res_data, sort_keys=True).encode("utf-8")
+            raw_hash = hashlib.sha256(content_bytes).hexdigest()
+            hash_temp_path = os.path.join(temp_stage_dir, f"{cid}.raw-hash.txt")
+            with open(hash_temp_path, "w") as f:
+                f.write(f"{raw_hash}\n")
+
+            hashes.append(raw_hash)
+            cases_catalog[cid]["captured"] = True
+
+            staged_updates.append((expected_temp_path, os.path.join(fixtures_dir, f"{cid}.expected.json")))
+            staged_updates.append((hash_temp_path, os.path.join(fixtures_dir, f"{cid}.raw-hash.txt")))
+
+        capture_env = manifest.get("captureEnvironment", {})
+        capture_env["host"] = get_tool_version(["uname", "-m"]) or "unknown"
+        capture_env["nodeVersion"] = get_tool_version(["node", "--version"]) or "unknown"
+        capture_env["bunVersion"] = get_tool_version(["bun", "--version"]) or "unknown"
+        capture_env["capturedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        combined_hash = hashlib.sha256("".join(sorted(hashes)).encode("utf-8")).hexdigest()
+        capture_env["digest"] = f"sha256:{combined_hash}"
+        capture_env["captureStatus"] = "completed"
+
+        manifest_temp_path = os.path.join(temp_stage_dir, "manifest.json")
+        with open(manifest_temp_path, "w") as f:
+            json.dump(manifest, f, indent=2)
             f.write("\n")
 
-        content_bytes = json.dumps(res_data, sort_keys=True).encode("utf-8")
-        raw_hash = hashlib.sha256(content_bytes).hexdigest()
-        hash_path = os.path.join(fixtures_dir, f"{cid}.raw-hash.txt")
-        with open(hash_path, "w") as f:
-            f.write(f"{raw_hash}\n")
+        # All adapters succeeded — commit/publish staged changes to destination
+        for src, dst in staged_updates:
+            shutil.copy2(src, dst)
 
-        hashes.append(raw_hash)
-        cases_catalog[cid]["captured"] = True
-
-    capture_env = manifest.get("captureEnvironment", {})
-    capture_env["host"] = get_tool_version(["uname", "-m"]) or "unknown"
-    capture_env["nodeVersion"] = get_tool_version(["node", "--version"]) or "unknown"
-    capture_env["bunVersion"] = get_tool_version(["bun", "--version"]) or "unknown"
-    capture_env["capturedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-    combined_hash = hashlib.sha256("".join(sorted(hashes)).encode("utf-8")).hexdigest()
-    capture_env["digest"] = f"sha256:{combined_hash}"
-    capture_env["captureStatus"] = "completed"
-
-    with open(MANIFEST_PATH, "w") as f:
-        json.dump(manifest, f, indent=2)
-        f.write("\n")
+        shutil.copy2(manifest_temp_path, MANIFEST_PATH)
 
     print(f"Reference capture complete for milestone {args.milestone}.")
 
