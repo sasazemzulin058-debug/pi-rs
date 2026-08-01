@@ -19,11 +19,6 @@ jobs:
         with:
           node-version: '24.18.0'
           
-      - name: Install Bun
-        uses: oven-sh/bun-setup@v1
-        with:
-          bun-version: '1.3.14'
-          
       - name: Clone upstream Pi
         run: |
           git clone https://github.com/earendil-works/pi-mono.git upstream-pi-mono
@@ -39,7 +34,8 @@ jobs:
       - name: Install upstream Pi dependencies
         run: |
           cd upstream-pi-mono
-          bun install --frozen-lockfile
+          npm ci
+          npm run hydrate-model-data --workspace=@earendil-works/pi-ai
           
       - name: Run reference capture
         env:
