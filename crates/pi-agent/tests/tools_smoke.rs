@@ -179,6 +179,54 @@ async fn bash_bounded_timeout_and_pipe_closure() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn bash_timeout_kills_descendants() {
+    use std::time::Instant;
+
+    let dir = scratch_dir();
+    let pidfile = dir.join("child.pid");
+    let marker = dir.join("child.done");
+
+    let tool = bash::BashTool::new();
+    let cmd = format!(
+        "( ( sleep 2; touch {} ) & echo $! > {}; wait )",
+        marker.display(),
+        pidfile.display()
+    );
+
+    let start = Instant::now();
+    let res = tool
+        .execute(
+            "1",
+            json!({
+                "command": cmd,
+                "timeout_ms": 200
+            }),
+        )
+        .await;
+
+    let elapsed = start.elapsed();
+    assert!(res.is_err(), "expected timeout error");
+    let err = res.unwrap_err();
+    assert!(err.contains("timed out"), "unexpected error string: {err}");
+    assert!(
+        elapsed.as_millis() < 2000,
+        "timeout took too long: {}ms",
+        elapsed.as_millis()
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    if let Ok(pid_str) = std::fs::read_to_string(&pidfile) {
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            let is_alive = unsafe { libc::kill(pid, 0) == 0 };
+            assert!(!is_alive, "descendant process {pid} was not killed");
+        }
+    }
+
+    assert!(!marker.exists(), "marker file should not exist");
+}
+
 #[tokio::test]
 async fn bash_runs_simple_command() {
     let tool = bash::BashTool::new();
