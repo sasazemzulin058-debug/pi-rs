@@ -195,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
     let trust_decision = if explicitly_trusted {
         crate::trust::TrustDecision::Trusted
     } else {
-        crate::trust::evaluate_trust(cwd.as_deref(), false)
+        crate::trust::evaluate_trust(cwd.as_deref(), cli.prompt.is_none())
     };
 
     match (cli.prompt, cli.resume) {
