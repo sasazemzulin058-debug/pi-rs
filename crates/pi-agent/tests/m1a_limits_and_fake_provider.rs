@@ -278,7 +278,9 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
     match &run.messages[1] {
         Message::Assistant(a) => {
             assert_eq!(a.stop_reason, StopReason::ToolUse);
-            assert!(matches!(&a.content[0], Content::ToolCall { id, name, .. } if id == "call_1" && name == "write"));
+            assert!(
+                matches!(&a.content[0], Content::ToolCall { id, name, .. } if id == "call_1" && name == "write")
+            );
         }
         _ => panic!("expected Assistant message at index 1"),
     }
