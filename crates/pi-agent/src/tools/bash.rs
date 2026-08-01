@@ -135,7 +135,9 @@ impl AgentTool for BashTool {
                     .stderr(Stdio::piped());
                 #[cfg(unix)]
                 fallback.process_group(0);
-                fallback.spawn().map_err(|e| format!("spawn fallback sh: {e}"))?
+                fallback
+                    .spawn()
+                    .map_err(|e| format!("spawn fallback sh: {e}"))?
             }
             Err(e) => return Err(format!("spawn: {e}")),
         };

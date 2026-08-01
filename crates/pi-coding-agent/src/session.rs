@@ -452,6 +452,10 @@ pub fn import_pi_session(path: &Path) -> anyhow::Result<PiSessionImport> {
     }
 
     if session_id.is_empty() {
+        anyhow::bail!("Missing session header in {}", path.display());
+    }
+
+    if session_id.is_empty() {
         session_id = path
             .file_stem()
             .and_then(|s| s.to_str())
