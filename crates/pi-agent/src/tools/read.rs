@@ -50,9 +50,7 @@ impl AgentTool for ReadTool {
 
         // Standard Pi bounds defaults: max 400 lines, max 50KB total output
         let max_lines = limit.unwrap_or(400);
-        let start = offset
-            .map(|o| o.saturating_sub(1))
-            .unwrap_or(0);
+        let start = offset.map(|o| o.saturating_sub(1)).unwrap_or(0);
 
         if start >= lines.len() {
             return Err(format!(
