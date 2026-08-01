@@ -195,3 +195,106 @@ async fn test_agent_loop_tool_execution() {
         let _ = std::fs::remove_dir_all(&test_dir);
     }
 }
+
+#[tokio::test]
+async fn test_serial_tool_loop_transcript_and_provider_calls() {
+    use pi_agent::tools::write::WriteTool;
+    use pi_agent::types::AgentTool;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingFakeProviderFactory {
+        inner: FakeProviderFactory,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderFactory for CountingFakeProviderFactory {
+        async fn stream(
+            &self,
+            model: &Model,
+            context: &pi_ai::Context,
+            options: &pi_ai::StreamOptions,
+        ) -> pi_ai::Result<pi_ai::AssistantMessageEventStream> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.stream(model, context, options).await
+        }
+    }
+
+    let test_dir = std::env::temp_dir().join(format!("pi_agent_serial_test_{}", std::process::id()));
+    let test_path = test_dir.join("serial_write.txt");
+    let test_path_str = test_path.to_string_lossy().to_string();
+
+    let model = test_model();
+    let events = vec![
+        AssistantMessageEvent::Done {
+            reason: StopReason::ToolUse,
+            message: test_assistant_message(
+                vec![Content::ToolCall {
+                    id: "call_1".into(),
+                    name: "write".into(),
+                    arguments: serde_json::json!({
+                        "path": test_path_str,
+                        "content": "serial step 1"
+                    }),
+                }],
+                StopReason::ToolUse,
+            ),
+        },
+        AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: test_assistant_message(
+                vec![Content::text("done serial tool call")],
+                StopReason::Stop,
+            ),
+        },
+    ];
+
+    let counting_factory = Arc::new(CountingFakeProviderFactory {
+        inner: FakeProviderFactory::new(events),
+        calls: AtomicUsize::new(0),
+    });
+
+    let tool: Arc<dyn AgentTool> = Arc::new(WriteTool);
+    let cfg = AgentConfig::new(model, "system")
+        .with_provider_factory(counting_factory.clone())
+        .with_tools(vec![tool]);
+
+    let user_msg = Message::user_text("run serial tool");
+    let result = run_agent(&cfg, user_msg, None).await;
+    assert!(result.is_ok());
+    let run = result.unwrap();
+
+    assert_eq!(counting_factory.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(run.messages.len(), 4);
+
+    match &run.messages[0] {
+        Message::User(u) => assert_eq!(u.content, vec![Content::text("run serial tool")]),
+        _ => panic!("expected User message at index 0"),
+    }
+    match &run.messages[1] {
+        Message::Assistant(a) => {
+            assert_eq!(a.stop_reason, StopReason::ToolUse);
+            assert!(matches!(&a.content[0], Content::ToolCall { id, name, .. } if id == "call_1" && name == "write"));
+        }
+        _ => panic!("expected Assistant message at index 1"),
+    }
+    match &run.messages[2] {
+        Message::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_1");
+            assert_eq!(tr.tool_name, "write");
+            assert!(!tr.is_error);
+        }
+        _ => panic!("expected ToolResult message at index 2"),
+    }
+    match &run.messages[3] {
+        Message::Assistant(a) => {
+            assert_eq!(a.stop_reason, StopReason::Stop);
+            assert_eq!(a.content, vec![Content::text("done serial tool call")]);
+        }
+        _ => panic!("expected Assistant final message at index 3"),
+    }
+
+    if test_dir.exists() {
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+}
