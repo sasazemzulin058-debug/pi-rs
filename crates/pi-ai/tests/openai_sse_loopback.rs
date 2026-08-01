@@ -2,7 +2,7 @@
 //! Tests response frames split across arbitrary byte boundaries, including
 //! text and tool call delta fragmentation.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
@@ -21,6 +21,40 @@ async fn test_openai_sse_fragmented_loopback() {
 
     let server_handle = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
+
+        let mut req_buf = Vec::new();
+        let mut buf = [0u8; 1024];
+        let mut header_len = 0;
+        loop {
+            let n = stream.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            req_buf.extend_from_slice(&buf[..n]);
+            if let Some(pos) = req_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_len = pos + 4;
+                break;
+            }
+        }
+
+        let headers_str = String::from_utf8_lossy(&req_buf[..header_len]);
+        let mut content_length = 0;
+        for line in headers_str.lines() {
+            if line.to_lowercase().starts_with("content-length:") {
+                if let Some(val) = line.split(':').nth(1) {
+                    content_length = val.trim().parse::<usize>().unwrap_or(0);
+                }
+            }
+        }
+
+        let mut body_read = req_buf.len() - header_len;
+        while body_read < content_length {
+            let n = stream.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            body_read += n;
+        }
 
         let response_headers = "HTTP/1.1 200 OK\r\n\
 Content-Type: text/event-stream\r\n\
