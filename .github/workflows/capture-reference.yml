@@ -40,7 +40,7 @@ jobs:
         run: |
           cd upstream-pi-mono
           npm ci
-          npm run hydrate:model-data --workspace=@earendil-works/pi-ai
+          npm run hydrate-model-data --workspace=@earendil-works/pi-ai
           
       - name: Run reference capture
         env:
