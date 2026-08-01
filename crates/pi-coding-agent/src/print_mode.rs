@@ -23,6 +23,7 @@ pub async fn run_print(
     permission: Arc<dyn PermissionPolicy>,
     json_mode: bool,
     trust_decision: crate::trust::TrustDecision,
+    initial: Option<crate::session::Session>,
 ) -> anyhow::Result<()> {
     let cfg = AgentConfig::new(
         app.model.clone(),
@@ -34,9 +35,19 @@ pub async fn run_print(
     .with_permission(permission);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let user = Message::user_text(prompt);
+    let history = initial.map(|session| {
+        let mut messages = session.messages;
+        messages.push(user.clone());
+        messages
+    });
 
     let cfg_cloned = cfg.clone();
-    let handle = tokio::spawn(async move { run_agent(&cfg_cloned, user, Some(tx)).await });
+    let handle = tokio::spawn(async move {
+        match history {
+            Some(messages) => pi_agent::run_agent_with_history(&cfg_cloned, messages, Some(tx)).await,
+            None => run_agent(&cfg_cloned, user, Some(tx)).await,
+        }
+    });
 
     if json_mode {
         run_json(&mut rx).await;

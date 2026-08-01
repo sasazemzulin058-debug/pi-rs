@@ -116,8 +116,12 @@ struct Cli {
     json: bool,
 
     /// Resume a saved session by id.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "import")]
     resume: Option<String>,
+
+    /// Import a Pi JSONL session read-only and continue from a native COW copy.
+    #[arg(long, conflicts_with = "resume")]
+    import: Option<std::path::PathBuf>,
 
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -197,19 +201,27 @@ async fn main() -> anyhow::Result<()> {
     } else {
         crate::trust::evaluate_trust(cwd.as_deref(), cli.prompt.is_none())
     };
+    let imported = cli
+        .import
+        .as_deref()
+        .map(session::import_pi_session)
+        .transpose()?
+        .map(|source| session::import_as_cow(&source));
 
-    match (cli.prompt, cli.resume) {
-        (Some(p), _) => print_mode::run_print(&app, p, permission, json, trust_decision).await,
-        (None, resume_id) => {
-            let initial = match resume_id {
-                Some(id) => match session::load(&app.config_dir, &id) {
+    match (cli.prompt, cli.resume, imported) {
+        (Some(p), _, initial) => {
+            print_mode::run_print(&app, p, permission, json, trust_decision, initial).await
+        }
+        (None, resume_id, initial) => {
+            let initial = match (resume_id, initial) {
+                (Some(id), _) => match session::load(&app.config_dir, &id) {
                     Ok(s) => Some(s),
                     Err(e) => {
                         eprintln!("warning: failed to load session {id}: {e}");
                         None
                     }
                 },
-                None => None,
+                (None, imported) => imported,
             };
             interactive::run_interactive(&app, permission, initial, trust_decision).await
         }
