@@ -12,7 +12,9 @@ from contract_fixture_lib import normalize_structure
 def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
     """Capture case cli.print.basic using upstream Pi CLI print mode."""
     cmd = ["bun", "run", "packages/coding-agent/src/cli.ts", "--print", "hello"]
-    res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True, check=True)
+    res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
     raw = {
         "exit_code": res.returncode,
         "stdout": res.stdout,
@@ -25,6 +27,8 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
     # Run upstream CLI in print mode with scripted prompt requiring sequential tool calls
     cmd = ["bun", "run", "packages/coding-agent/src/cli.ts", "--print", "read file test.txt"]
     res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
     raw = {
         "exit_code": res.returncode,
         "stdout": res.stdout,
