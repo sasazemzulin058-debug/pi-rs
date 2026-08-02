@@ -33,14 +33,14 @@ def capture_cli_print_basic(upstream_root: str) -> dict[str, Any]:
     _repair_gaxios_metadata(upstream_root)
     cmd = [
         "node",
-        "--import",
-        "tsx/esm",
-        "packages/coding-agent/src/cli.ts",
+        "packages/coding-agent/dist/cli.js",
         "--print",
         "hello",
     ]
     bash_cmd = f"cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json && exec {shlex.join(cmd)}"
-    res = subprocess.run(["bash", "-c", bash_cmd], cwd=upstream_root, capture_output=True, text=True)
+    res = subprocess.run(
+        ["bash", "-c", bash_cmd], cwd=upstream_root, capture_output=True, text=True
+    )
     if res.returncode != 0:
         raise RuntimeError(
             f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"
@@ -55,14 +55,14 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> dict[str, Any]:
     # Run upstream CLI in print mode with scripted prompt requiring sequential tool calls
     cmd = [
         "node",
-        "--import",
-        "tsx/esm",
-        "packages/coding-agent/src/cli.ts",
+        "packages/coding-agent/dist/cli.js",
         "--print",
         "read file test.txt",
     ]
     bash_cmd = f"cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json && exec {shlex.join(cmd)}"
-    res = subprocess.run(["bash", "-c", bash_cmd], cwd=upstream_root, capture_output=True, text=True)
+    res = subprocess.run(
+        ["bash", "-c", bash_cmd], cwd=upstream_root, capture_output=True, text=True
+    )
     if res.returncode != 0:
         raise RuntimeError(
             f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"

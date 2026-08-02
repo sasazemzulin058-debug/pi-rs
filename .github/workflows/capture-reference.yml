@@ -43,6 +43,8 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('node_modules/gaxios/package.json', 'utf8')); console.log('validated node_modules/gaxios/package.json')"
           node --import tsx/esm packages/ai/scripts/generate-models.ts \
             --strict --data-only
+          npm run build --workspace=@earendil-works/pi-coding-agent
+          npm run build
           rm -rf node_modules/gaxios
           cp -R /tmp/gaxios-repair/package node_modules/gaxios
           node --input-type=module -e '
