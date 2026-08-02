@@ -116,6 +116,121 @@ async fn write_failure_preserves_existing_path() {
 }
 
 #[tokio::test]
+async fn edit_replace_all_replaces_every_occurrence() {
+    let dir = scratch_dir();
+    let path = dir.join("all.txt");
+    std::fs::write(&path, "foo foo foo").unwrap();
+
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "old_string": "foo", "new_string": "bar", "replace_all": true}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "bar bar bar");
+}
+
+#[tokio::test]
+async fn edit_rejects_missing_and_ambiguous_matches() {
+    let dir = scratch_dir();
+    let path = dir.join("matches.txt");
+    std::fs::write(&path, "foo foo").unwrap();
+
+    let ambiguous = edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "old_string": "foo", "new_string": "bar"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(ambiguous.contains("occurs 2 times"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "foo foo");
+
+    let missing = edit::EditTool
+        .execute(
+            "2",
+            json!({"path": path, "old_string": "missing", "new_string": "bar"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(missing.contains("old_string not found"));
+}
+
+#[tokio::test]
+async fn edit_preserves_crlf_line_endings() {
+    let dir = scratch_dir();
+    let path = dir.join("crlf.txt");
+    std::fs::write(&path, b"foo\r\nbar\r\n").unwrap();
+
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "old_string": "bar", "new_string": "BAR"}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read(&path).unwrap(), b"foo\r\nBAR\r\n");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn edit_preserves_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch_dir();
+    let path = dir.join("permissions.txt");
+    std::fs::write(&path, "foo").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "old_string": "foo", "new_string": "bar"}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn edit_follows_symlink_and_preserves_target_permissions() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let dir = scratch_dir();
+    let target = dir.join("target.txt");
+    let link = dir.join("link.txt");
+    std::fs::write(&target, "foo").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&target, &link).unwrap();
+
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": link, "old_string": "foo", "new_string": "bar"}),
+        )
+        .await
+        .unwrap();
+
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "bar");
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+}
+
+#[tokio::test]
 async fn edit_replaces_single_occurrence() {
     let dir = scratch_dir();
     let path = dir.join("a.txt");

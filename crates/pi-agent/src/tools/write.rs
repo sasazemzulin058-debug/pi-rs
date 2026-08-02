@@ -1,3 +1,5 @@
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
@@ -10,6 +12,27 @@ static WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 use crate::types::{AgentTool, AgentToolResult};
 
 pub struct WriteTool;
+
+fn temporary_path(destination: &Path, n: u64) -> PathBuf {
+    let mut name: OsString = destination.as_os_str().to_os_string();
+    name.push(format!(".tmp.{}.{n}", std::process::id()));
+    PathBuf::from(name)
+}
+
+async fn create_exclusive_temp_file(path: PathBuf) -> std::io::Result<fs::File> {
+    // The synchronous create_new call is isolated from the async executor. Cancellation can
+    // abandon the blocking task after the OS operation starts, so cleanup is bounded but not
+    // guaranteed until the next residue cleanup; the exclusive create itself remains atomic.
+    tokio::task::spawn_blocking(move || {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+    })
+    .await
+    .map_err(std::io::Error::other)?
+    .map(fs::File::from_std)
+}
 
 #[async_trait]
 impl AgentTool for WriteTool {
@@ -61,14 +84,8 @@ impl AgentTool for WriteTool {
         let mut tmp_file = None;
         for _ in 0..100 {
             let n = WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
-            let candidate =
-                std::path::PathBuf::from(format!("{path}.tmp.{}.{n}", std::process::id()));
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&candidate)
-                .await
-            {
+            let candidate = temporary_path(destination, n);
+            match create_exclusive_temp_file(candidate.clone()).await {
                 Ok(file) => {
                     tmp_path = Some(candidate);
                     tmp_file = Some(file);
@@ -161,8 +178,7 @@ mod tests {
         ));
         fs::create_dir_all(&dir).await.unwrap();
         let path = dir.join("target.txt");
-        let occupied =
-            std::path::PathBuf::from(format!("{}.tmp.{}.0", path.display(), std::process::id()));
+        let occupied = temporary_path(&path, 0);
         fs::write(&occupied, "sentinel").await.unwrap();
 
         WriteTool
