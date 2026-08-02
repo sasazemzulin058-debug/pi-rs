@@ -156,6 +156,11 @@ fn convert_messages(system_prompt: Option<&str>, messages: &[Message]) -> Vec<Va
     out
 }
 
+/// Build the raw OpenAI Chat Completions request body. Exposed for testing.
+pub fn build_request_body(model: &Model, context: &Context, options: &StreamOptions) -> Value {
+    build_body(model, context, options)
+}
+
 fn build_body(model: &Model, context: &Context, options: &StreamOptions) -> Value {
     let mut body = json!({
         "model": model.id,

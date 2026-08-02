@@ -126,6 +126,11 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
     out
 }
 
+/// Build the raw Google Gemini request body. Exposed for testing.
+pub fn build_request_body(context: &Context, options: &StreamOptions) -> Value {
+    build_body(context, options)
+}
+
 fn build_body(context: &Context, options: &StreamOptions) -> Value {
     let mut body = json!({
         "contents": convert_messages(&context.messages),

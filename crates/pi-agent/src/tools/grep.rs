@@ -4,6 +4,19 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::PathBuf;
+
+const MAX_OUTPUT_BYTES: usize = 50 * 1024;
+
+fn append_truncation(buf: &mut String, message: &str) {
+    let keep = MAX_OUTPUT_BYTES.saturating_sub(message.len());
+    let boundary = (0..=keep)
+        .rev()
+        .find(|&index| buf.is_char_boundary(index))
+        .unwrap_or(0);
+    buf.truncate(boundary);
+    buf.push_str(message);
+}
 
 use crate::types::{AgentTool, AgentToolResult};
 
@@ -63,16 +76,27 @@ impl AgentTool for GrepTool {
         let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
             let mut buf = String::new();
             let mut hits = 0usize;
-            let walker = WalkBuilder::new(&path).follow_links(false).build();
-            'outer: for entry in walker.flatten() {
-                if hits >= max {
+            let mut files: Vec<PathBuf> = WalkBuilder::new(&path)
+                .follow_links(false)
+                .require_git(false)
+                .build()
+                .flatten()
+                .map(|entry| entry.into_path())
+                .filter(|p| p.is_file())
+                .collect();
+            files.sort();
+
+            'outer: for p in files {
+                if hits >= max || buf.len() >= MAX_OUTPUT_BYTES {
+                    if buf.len() >= MAX_OUTPUT_BYTES {
+                        append_truncation(
+                            &mut buf,
+                            &format!("... (truncated at {MAX_OUTPUT_BYTES} bytes)\n"),
+                        );
+                    }
                     break;
                 }
-                let p = entry.path();
-                if !p.is_file() {
-                    continue;
-                }
-                let text = match fs::read_to_string(p) {
+                let text = match fs::read_to_string(&p) {
                     Ok(t) => t,
                     Err(_) => continue, // skip binary or unreadable
                 };
@@ -106,18 +130,24 @@ impl AgentTool for GrepTool {
                     let lineno = idx + 1;
                     let line = lines[*idx];
                     let sep = if match_set.contains(idx) { ':' } else { '-' };
-                    buf.push_str(&format!(
-                        "{}{}{}{}{}\n",
-                        p.display(),
-                        sep,
-                        lineno,
-                        sep,
-                        line
-                    ));
+                    let output = format!("{}{}{}{}{}\n", p.display(), sep, lineno, sep, line);
+                    if buf.len() + output.len() > MAX_OUTPUT_BYTES {
+                        append_truncation(
+                            &mut buf,
+                            &format!("... (truncated at {MAX_OUTPUT_BYTES} bytes)\n"),
+                        );
+                        break 'outer;
+                    }
+                    buf.push_str(&output);
                 }
                 hits += match_indices.len();
                 if hits >= max {
-                    buf.push_str(&format!("... (truncated at {max} matches)\n"));
+                    let notice = format!("... (truncated at {max} matches)\n");
+                    if buf.len() + notice.len() > MAX_OUTPUT_BYTES {
+                        append_truncation(&mut buf, &notice);
+                    } else {
+                        buf.push_str(&notice);
+                    }
                     break 'outer;
                 }
             }

@@ -115,6 +115,11 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
     out
 }
 
+/// Build the raw OpenAI Responses request body. Exposed for testing.
+pub fn build_request_body(model: &Model, context: &Context, options: &StreamOptions) -> Value {
+    build_body(model, context, options)
+}
+
 fn build_body(model: &Model, context: &Context, options: &StreamOptions) -> Value {
     let mut body = json!({
         "model": model.id,
