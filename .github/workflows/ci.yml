@@ -64,6 +64,10 @@ jobs:
         run: |
           python3 scripts/compare-contract-fixtures --self-test
 
+      - name: Run CLI and Termux prerequisite smoke
+        run: |
+          bash scripts/termux-smoke.sh --binary target/release/pi-rs
+
   supply-chain:
     name: supply-chain
     runs-on: ubuntu-latest
