@@ -79,3 +79,26 @@ jobs:
         run: >-
           cargo audit --ignore RUSTSEC-2026-0204 --ignore RUSTSEC-2026-0185
           --ignore RUSTSEC-2026-0190
+
+  build-android:
+    name: build (android-aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - uses: nsetup/action-setup-ndk@v2
+        with:
+          ndk-version: r25c
+      - name: cargo build release for aarch64-linux-android
+        run: >-
+          cargo build --package pi-rs --release
+          --target aarch64-linux-android
+      - name: Upload Termux aarch64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-rs-aarch64-linux-android
+          path: target/aarch64-linux-android/release/pi-rs
