@@ -99,6 +99,12 @@ jobs:
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: >-
             ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/
             prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+          CC_aarch64_linux_android: >-
+            ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/
+            prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
+          AR_aarch64_linux_android: >-
+            ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/
+            prebuilt/linux-x86_64/bin/llvm-ar
         run: >-
           cargo build --package pi-coding-agent --release
           --target aarch64-linux-android
