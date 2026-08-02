@@ -11,8 +11,14 @@
     "host": "x86_64",
     "nodeVersion": "v24.18.0",
     "bunVersion": "unknown",
-    "digest": "sha256:ffd330cb08732c80bfdb9e4c99a7542e40c61d60c3d197a39c31cc6c18c41a48",
-    "capturedAt": "2026-08-02T07:31:59.450119+00:00"
+    "digest": "sha256:33c91b31f27b69bc2324c964693b3717145c3a7e646a1bbfa290063e3e9111b4",
+    "capturedAt": "2026-08-02T17:42:29.091633+00:00",
+    "captureScope": {
+      "milestone": "M1",
+      "caseIds": [
+        "cli.json-events"
+      ]
+    }
   },
   "requiredCaseIds": {
     "M0": [],
@@ -123,7 +129,7 @@
       "oracle": "pi-rs-invariant"
     },
     "cli.json-events": {
-      "captured": false,
+      "captured": true,
       "description": "Structured JSON event output",
       "oracle": "upstream-pi"
     },
