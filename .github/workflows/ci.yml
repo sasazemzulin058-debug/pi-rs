@@ -55,6 +55,7 @@ jobs:
       - name: Run Python contract tests
         run: |
           python3 -m unittest discover -s tests/contract -p "test_*.py"
+          python3 scripts/capture_adapters/test_m1_capture_adapters.py
 
       - name: Validate fixture manifest (M0 validation)
         run: |
