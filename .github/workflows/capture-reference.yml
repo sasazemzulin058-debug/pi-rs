@@ -53,6 +53,13 @@ jobs:
           NODE
           sha256sum node_modules/gaxios/package.json
 
+      - name: Diagnose gaxios before capture
+        run: |
+          sha256sum upstream-pi-mono/node_modules/gaxios/package.json
+          sha256sum /tmp/gaxios-repair/package/package.json
+          head -c 40 upstream-pi-mono/node_modules/gaxios/package.json
+          printf '\n'
+
       - name: Run reference capture
         env:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
