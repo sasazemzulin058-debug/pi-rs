@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Ensure parent scripts directory is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -290,9 +290,87 @@ console.log(JSON.stringify({{ success, error_case }}));
 
 
 def capture_tool_bash_cancel_descendants(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError(
-        "real upstream capture required: tool.bash.cancel-descendants"
-    )
+    """Capture case tool.bash.cancel-descendants using upstream createBashToolDefinition."""
+    bash_tool_path = (
+        Path(upstream_root) / "packages/coding-agent/src/core/tools/bash.ts"
+    ).resolve()
+    with tempfile.TemporaryDirectory(
+        prefix="capture-bash-", dir=upstream_root
+    ) as temp_dir:
+        pid_file = Path(temp_dir) / "descendant.pid"
+        script_path = Path(temp_dir) / "capture-bash.ts"
+        script_path.write_text(
+            f"""import {{ createBashToolDefinition }} from {json.dumps(str(bash_tool_path))};
+
+const tool = createBashToolDefinition({json.dumps(temp_dir)});
+const pidFile = {json.dumps(str(pid_file))};
+
+const abortController = new AbortController();
+
+const execPromise = tool.execute(
+  "bash-1",
+  {{ command: `sleep 100 & echo $! > "${{pidFile}}" && wait` }},
+  abortController.signal,
+  undefined,
+  undefined
+);
+
+// Wait for descendant pid file to be written
+let pid = "";
+for (let i = 0; i < 50; i++) {{
+  try {{
+    const fs = await import("fs");
+    if (fs.existsSync(pidFile)) {{
+      pid = fs.readFileSync(pidFile, "utf-8").trim();
+      if (pid) break;
+    }}
+  }} catch (_) {{}}
+  await new Promise((r) => setTimeout(r, 100));
+}}
+
+abortController.abort();
+
+let res;
+try {{
+  res = await execPromise;
+}} catch (err) {{
+  res = {{ error: String(err) }};
+}}
+
+// Check if descendant process is dead
+let isAlive = false;
+if (pid) {{
+  try {{
+    process.kill(Number(pid), 0);
+    isAlive = true;
+  }} catch (_) {{
+    isAlive = false;
+  }}
+}}
+
+console.log(JSON.stringify({{ res, descendant_pid: pid, descendant_alive: isAlive }}));
+""",
+            encoding="utf-8",
+        )
+        tsx_loader = _get_tsx_import_arg(upstream_root)
+        res = subprocess.run(
+            ["node", "--import", tsx_loader, str(script_path)],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"upstream tool.bash.cancel-descendants execution failed ({res.returncode}): {res.stderr.strip()}"
+            )
+        try:
+            return cast(
+                dict[str, Any], normalize_structure(json.loads(res.stdout.strip()))
+            )
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"upstream tool.bash.cancel-descendants returned invalid JSON: {res.stdout!r}"
+            ) from exc
 
 
 def capture_resource_context_precedence(upstream_root: str) -> dict[str, Any]:
@@ -344,7 +422,9 @@ console.log(JSON.stringify(files));
                 f"upstream resource.context-precedence execution failed ({res.returncode}): {res.stderr.strip()}"
             )
         try:
-            return normalize_structure(json.loads(res.stdout.strip()))
+            return cast(
+                dict[str, Any], normalize_structure(json.loads(res.stdout.strip()))
+            )
         except json.JSONDecodeError as exc:
             raise RuntimeError(
                 f"upstream resource.context-precedence returned invalid JSON: {res.stdout!r}"
@@ -352,9 +432,45 @@ console.log(JSON.stringify(files));
 
 
 def capture_resource_untrusted_project(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError(
-        "real upstream capture required: resource.untrusted-project"
-    )
+    """Capture case resource.untrusted-project using project trust modules."""
+    project_trust_path = (
+        Path(upstream_root) / "packages/coding-agent/src/core/project-trust.ts"
+    ).resolve()
+    with tempfile.TemporaryDirectory(
+        prefix="capture-trust-", dir=upstream_root
+    ) as temp_dir:
+        script_path = Path(temp_dir) / "capture-trust.ts"
+        script_path.write_text(
+            f"""import {{ isProjectTrusted, setProjectTrust }} from {json.dumps(str(project_trust_path))};
+
+const projectDir = {json.dumps(temp_dir)};
+const before = isProjectTrusted(projectDir);
+setProjectTrust(projectDir, true);
+const after = isProjectTrusted(projectDir);
+
+console.log(JSON.stringify({{ before, after }}));
+""",
+            encoding="utf-8",
+        )
+        tsx_loader = _get_tsx_import_arg(upstream_root)
+        res = subprocess.run(
+            ["node", "--import", tsx_loader, str(script_path)],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"upstream resource.untrusted-project execution failed ({res.returncode}): {res.stderr.strip()}"
+            )
+        try:
+            return cast(
+                dict[str, Any], normalize_structure(json.loads(res.stdout.strip()))
+            )
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"upstream resource.untrusted-project returned invalid JSON: {res.stdout!r}"
+            ) from exc
 
 
 ADAPTERS = {
