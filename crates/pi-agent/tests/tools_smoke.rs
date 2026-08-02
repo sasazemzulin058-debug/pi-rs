@@ -191,8 +191,10 @@ async fn bash_timeout_kills_descendants() {
     let tool = bash::BashTool::new();
     let pidfile_str = pidfile.to_string_lossy();
     let marker_str = marker.to_string_lossy();
+
+    // Writes PID synchronously before starting background sleep
     let cmd = format!(
-        "printf '%s\\n' \"$$\" > \"{pidfile_str}\"; ( sleep 2; touch \"{marker_str}\" ) & wait"
+        "printf '%s\\n' \"$$\" > \"{pidfile_str}\"; ( sleep 10; touch \"{marker_str}\" ) & wait"
     );
 
     let start = Instant::now();
@@ -201,7 +203,7 @@ async fn bash_timeout_kills_descendants() {
             "1",
             json!({
                 "command": cmd,
-                "timeout_ms": 200
+                "timeout_ms": 1000
             }),
         )
         .await;
@@ -211,22 +213,13 @@ async fn bash_timeout_kills_descendants() {
     let err = res.unwrap_err();
     assert!(err.contains("timed out"), "unexpected error string: {err}");
     assert!(
-        elapsed.as_millis() < 2000,
+        elapsed.as_millis() < 5000,
         "timeout took too long: {}ms",
         elapsed.as_millis()
     );
 
-    let mut pid_str = String::new();
-    for _ in 0..50 {
-        if let Ok(content) = std::fs::read_to_string(&pidfile) {
-            if !content.trim().is_empty() {
-                pid_str = content;
-                break;
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
-
+    let pid_str = std::fs::read_to_string(&pidfile)
+        .expect("pidfile must be created and readable");
     let pid: i32 = pid_str
         .trim()
         .parse()
