@@ -1,9 +1,11 @@
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,16 +27,97 @@ def _get_tsx_import_arg(upstream_root: str) -> str:
     return "tsx/esm"
 
 
+def _parse_strict_jsonl(
+    stdout: str, stderr: str, returncode: int
+) -> list[dict[str, Any]]:
+    """Parse a runner protocol without hiding diagnostics or malformed lines."""
+    if returncode != 0:
+        raise RuntimeError(f"runner exited with status {returncode}")
+    if stderr:
+        raise RuntimeError(f"runner wrote stderr: {stderr!r}")
+    if not stdout.strip():
+        raise RuntimeError("runner produced empty stdout")
+    records: list[dict[str, Any]] = []
+    for number, line in enumerate(stdout.splitlines(), 1):
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"runner stdout line {number} is not JSON") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError(f"runner stdout line {number} is not a JSON object")
+        records.append(value)
+    return records
+
+
+def _normalize_capture(value: Any, disposable_root: str, upstream_root: str) -> Any:
+    """Normalize only instability owned by the disposable capture runner."""
+    ids_by_kind: dict[str, dict[str, str]] = {"session": {}, "entry": {}}
+    counters = {"session": 0, "entry": 0}
+
+    def walk(item: Any) -> Any:
+        if isinstance(item, str):
+            item = item.replace(disposable_root, "__CAPTURE_ROOT__").replace(
+                upstream_root, "__UPSTREAM_ROOT__"
+            )
+            if re.fullmatch(r"(?:\d{4}-\d{2}-\d{2}T[^ ]+|\d{10,13})", item):
+                return "0"
+            return item
+        if isinstance(item, list):
+            return [walk(v) for v in item]
+        if isinstance(item, dict):
+            result = {}
+            for key, val in item.items():
+                if key in {
+                    "timestamp",
+                    "createdAt",
+                    "updatedAt",
+                    "created_at",
+                } and isinstance(val, (int, float, str)):
+                    result[key] = 0
+                    continue
+                if key in {
+                    "sessionId",
+                    "session_id",
+                    "entryId",
+                    "entry_id",
+                } and isinstance(val, str):
+                    kind = "session" if "session" in key.lower() else "entry"
+                    ids = ids_by_kind[kind]
+                    if val not in ids:
+                        counters[kind] += 1
+                        ids[val] = f"{kind}-{counters[kind]}"
+                    result[key] = ids[val]
+                else:
+                    result[key] = walk(val)
+            return result
+        return item
+
+    return cast(Any, walk(value))
+
+
+def _unsupported_capture(case: str, upstream_root: str) -> dict[str, Any]:
+    """Do not publish a fixture until the pinned production seam is executable."""
+    raise RuntimeError(
+        f"{case}: production capture seam not verified in this environment; pinned root={upstream_root}"
+    )
+
+
+def capture_cli_json_events(upstream_root: str) -> dict[str, Any]:
+    return _unsupported_capture("cli.json-events", upstream_root)
+
+
+def capture_agent_retry_auto_compaction(upstream_root: str) -> dict[str, Any]:
+    return _unsupported_capture("agent.retry-auto-compaction", upstream_root)
+
+
 def _repair_gaxios_metadata(upstream_root: str) -> None:
     """Repair corrupted gaxios package.json metadata if needed."""
     source = Path("/tmp/gaxios-repair/package/package.json")
     target = Path(upstream_root) / "node_modules/gaxios/package.json"
     if source.exists() and target.parent.exists():
         target.write_bytes(source.read_bytes())
-        try:
+        with suppress(json.JSONDecodeError, UnicodeDecodeError):
             json.loads(target.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            pass
     elif target.exists():
         try:
             json.loads(target.read_text(encoding="utf-8"))
@@ -66,7 +149,7 @@ def capture_cli_print_basic(upstream_root: str) -> dict[str, Any]:
             f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"
         )
     raw = {"exit_code": res.returncode, "stdout": res.stdout, "stderr": res.stderr}
-    return normalize_structure(raw)
+    return cast(dict[str, Any], normalize_structure(raw))
 
 
 def capture_agent_serial_tool_loop(upstream_root: str) -> dict[str, Any]:
@@ -92,7 +175,7 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> dict[str, Any]:
             f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"
         )
     raw = {"exit_code": res.returncode, "stdout": res.stdout, "stderr": res.stderr}
-    return normalize_structure(raw)
+    return cast(dict[str, Any], normalize_structure(raw))
 
 
 def capture_provider_openai_chat_fragmented_sse(upstream_root: str) -> dict[str, Any]:
@@ -234,7 +317,7 @@ server.listen(0, "127.0.0.1", async () => {{
             res_json = json.loads(res.stdout.strip())
             if isinstance(res_json, dict) and "timestamp" in res_json:
                 res_json["timestamp"] = 0
-            return normalize_structure(res_json)
+            return cast(dict[str, Any], normalize_structure(res_json))
         except json.JSONDecodeError as exc:
             raise RuntimeError(
                 f"upstream provider.openai-chat.fragmented-sse returned invalid JSON: {res.stdout!r}"
@@ -576,4 +659,6 @@ ADAPTERS = {
     "tool.bash.cancel-descendants": capture_tool_bash_cancel_descendants,
     "resource.context-precedence": capture_resource_context_precedence,
     "resource.untrusted-project": capture_resource_untrusted_project,
+    "cli.json-events": capture_cli_json_events,
+    "agent.retry-auto-compaction": capture_agent_retry_auto_compaction,
 }
