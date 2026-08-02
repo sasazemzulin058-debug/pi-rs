@@ -5,6 +5,8 @@ import argparse
 import subprocess
 import json
 import datetime
+import tempfile
+import shutil
 
 # Adjust path to import from scripts/
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +20,38 @@ def get_tool_version(args):
         return res.stdout.strip()
     except Exception:
         return None
+
+def publish_staged(staged_updates):
+    """Replace all destinations, restoring originals if any publish step fails."""
+    backups = []
+    published = []
+    try:
+        for src, dst in staged_updates:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            backup = None
+            if os.path.exists(dst):
+                fd, backup = tempfile.mkstemp(prefix=".capture-backup-", dir=os.path.dirname(dst))
+                os.close(fd)
+                os.unlink(backup)
+                os.replace(dst, backup)
+            backups.append((dst, backup))
+            os.replace(src, dst)
+            published.append(dst)
+    except Exception:
+        for dst in reversed(published):
+            try:
+                os.unlink(dst)
+            except FileNotFoundError:
+                pass
+        for dst, backup in reversed(backups):
+            if backup is not None and os.path.exists(backup):
+                os.replace(backup, dst)
+        raise
+    else:
+        for _, backup in backups:
+            if backup is not None:
+                os.unlink(backup)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Capture reference fixtures from upstream Pi")
@@ -57,10 +91,8 @@ def main():
     hashes = []
     staged_updates = []
 
-    import tempfile
-    import shutil
-
-    with tempfile.TemporaryDirectory(prefix="capture_stage_") as temp_stage_dir:
+    # Keep staging on the destination filesystem so each publish rename is atomic.
+    with tempfile.TemporaryDirectory(prefix="capture_stage_", dir=os.path.dirname(fixtures_dir)) as temp_stage_dir:
         for cid in upstream_selected:
             adapter = ADAPTERS.get(cid)
             if not adapter:
@@ -110,11 +142,8 @@ def main():
             json.dump(manifest, f, indent=2)
             f.write("\n")
 
-        # All adapters succeeded — commit/publish staged changes to destination
-        for src, dst in staged_updates:
-            shutil.copy2(src, dst)
-
-        shutil.copy2(manifest_temp_path, MANIFEST_PATH)
+        # Publish with backups. A failed rename restores every destination file.
+        publish_staged(staged_updates + [(manifest_temp_path, MANIFEST_PATH)])
 
     print(f"Reference capture complete for milestone {args.milestone}.")
 

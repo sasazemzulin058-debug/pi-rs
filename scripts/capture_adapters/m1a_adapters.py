@@ -241,6 +241,65 @@ server.listen(0, "127.0.0.1", async () => {{
             ) from exc
 
 
+def capture_tool_edit(upstream_root: str) -> dict[str, Any]:
+    """Capture the pinned upstream edit definition against disposable files."""
+    with tempfile.TemporaryDirectory(
+        prefix="capture-edit-", dir=upstream_root
+    ) as temp_dir:
+        script_path = Path(temp_dir) / "capture-edit.ts"
+        edit_path = (
+            Path(upstream_root) / "packages/coding-agent/src/core/tools/edit.ts"
+        ).resolve()
+        script_path.write_text(
+            f"""import {{ readFile, writeFile }} from "node:fs/promises";
+import {{ createEditToolDefinition }} from {json.dumps(str(edit_path))};
+
+const root = {json.dumps(temp_dir)};
+const tool = createEditToolDefinition(root);
+const fs = await import("node:fs/promises");
+const cases = [];
+async function run(name, file, edits, initial) {{
+  const path = `${{root}}/${{file}}`;
+  if (initial !== undefined) await writeFile(path, initial, "utf8");
+  try {{
+    const result = await tool.execute("capture", {{ path: file, edits }});
+    cases.push({{ name, ok: true, result, bytes: Array.from(await readFile(path)) }});
+  }} catch (error) {{
+    cases.push({{ name, ok: false, error: error instanceof Error ? error.message : String(error), bytes: await fs.readFile(path).then(b => Array.from(b)).catch(() => null) }});
+  }}
+}}
+await run("multiple-disjoint", "multiple.txt", [
+  {{ oldText: "alpha", newText: "A" }}, {{ oldText: "gamma", newText: "G" }}
+], "alpha\\nbeta\\ngamma\\n");
+await run("duplicate-oldText", "duplicate.txt", [{{ oldText: "x", newText: "y" }}], "x\\nx\\n");
+await run("overlapping", "overlap.txt", [{{ oldText: "abcd", newText: "A" }}, {{ oldText: "bc", newText: "B" }}], "abcd\\n");
+await run("missing-file", "missing.txt", [{{ oldText: "x", newText: "y" }}]);
+await run("bom-crlf", "bom-crlf.txt", [{{ oldText: "one", newText: "ONE" }}], "\\ufeffone\\r\\ntwo\\r\\n");
+console.log(JSON.stringify({{ cases }}));
+""",
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            ["node", "--import", _get_tsx_import_arg(upstream_root), str(script_path)],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"upstream tool.edit execution failed ({res.returncode}): {res.stderr.strip()}"
+            )
+        try:
+            normalized = normalize_structure(json.loads(res.stdout.strip()))
+            if not isinstance(normalized, dict):
+                raise ValueError("upstream tool.edit output must be a JSON object")
+            return cast(dict[str, Any], normalized)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                f"upstream tool.edit returned invalid JSON: {res.stdout!r}"
+            ) from exc
+
+
 def capture_tool_read_bounds(upstream_root: str) -> dict[str, Any]:
     """Capture case tool.read.bounds by invoking upstream createReadToolDefinition on disposable fixture."""
     lines = [f"line {i}" for i in range(1, 21)]
@@ -512,6 +571,7 @@ ADAPTERS = {
     "cli.print.basic": capture_cli_print_basic,
     "agent.serial-tool-loop": capture_agent_serial_tool_loop,
     "provider.openai-chat.fragmented-sse": capture_provider_openai_chat_fragmented_sse,
+    "tool.edit": capture_tool_edit,
     "tool.read.bounds": capture_tool_read_bounds,
     "tool.bash.cancel-descendants": capture_tool_bash_cancel_descendants,
     "resource.context-precedence": capture_resource_context_precedence,
