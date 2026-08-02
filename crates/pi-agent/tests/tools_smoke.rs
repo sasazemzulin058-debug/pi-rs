@@ -395,6 +395,7 @@ async fn glob_finds_files() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn glob_relative_patterns_use_relative_paths() {
     static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _lock = CWD_LOCK.lock().unwrap();
