@@ -45,13 +45,21 @@ jobs:
           rm -rf node_modules/gaxios
           cp -R /tmp/gaxios-repair/package node_modules/gaxios
           node -e "JSON.parse(require('fs').readFileSync('node_modules/gaxios/package.json', 'utf8')); console.log('validated gaxios package after hydration')"
+          node --import tsx/esm <<'NODE'
+          const fs = require("fs");
+          const text = fs.readFileSync("node_modules/gaxios/package.json", "utf8");
+          JSON.parse(text);
+          console.log("validated gaxios package with tsx");
+          NODE
+          sha256sum node_modules/gaxios/package.json
 
       - name: Run reference capture
         env:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python3 scripts/capture-upstream-fixtures --milestone "${{ github.event.inputs.milestone }}"
+          milestone="${{ github.event.inputs.milestone }}"
+          python3 scripts/capture-upstream-fixtures --milestone "$milestone"
 
       - name: Archive captured fixtures
         uses: actions/upload-artifact@v4
