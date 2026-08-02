@@ -101,6 +101,42 @@ def _normalize_capture(value: Any, disposable_root: str, upstream_root: str) -> 
     return cast(Any, walk(value))
 
 
+def _validate_search_capture(record: dict[str, Any]) -> None:
+    """Reject protocol drift and unverifiable search-tool provenance."""
+    if set(record) != {"grep", "find", "ls", "provenance"}:
+        raise RuntimeError("tool.grep-find-ls: invalid runner protocol")
+    if not all(isinstance(record[name], dict) for name in ("grep", "find", "ls")):
+        raise RuntimeError("tool.grep-find-ls: search result is not an object")
+    provenance = record["provenance"]
+    if not isinstance(provenance, dict) or set(provenance) != {"rg", "fd"}:
+        raise RuntimeError("tool.grep-find-ls: invalid executable provenance")
+    for name in ("rg", "fd"):
+        value = provenance[name]
+        if not isinstance(value, dict) or set(value) != {
+            "command",
+            "path",
+            "version",
+            "sha256",
+        }:
+            raise RuntimeError("tool.grep-find-ls: incomplete executable provenance")
+        command = value["command"]
+        path = value["path"]
+        version = value["version"]
+        digest = value["sha256"]
+        if (
+            not isinstance(command, str)
+            or not command
+            or not isinstance(version, str)
+            or not version
+            or not isinstance(path, str)
+            or not os.path.isabs(path)
+            or os.path.realpath(path) != path
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise RuntimeError("tool.grep-find-ls: non-canonical executable provenance")
+
+
 def _unsupported_capture(case: str, upstream_root: str) -> dict[str, Any]:
     """Do not publish a fixture until the pinned production seam is executable."""
     raise RuntimeError(
@@ -173,6 +209,80 @@ process.exitCode = await runPrintMode(runtimeHost, { mode: "json", initialMessag
 
 def capture_agent_retry_auto_compaction(upstream_root: str) -> dict[str, Any]:
     return _unsupported_capture("agent.retry-auto-compaction", upstream_root)
+
+
+def capture_tool_grep_find_ls(upstream_root: str) -> dict[str, Any]:
+    """Capture the pinned production grep, find, and ls definitions."""
+    loader = _get_tsx_import_arg(upstream_root)
+    if loader == "tsx/esm":
+        raise RuntimeError(
+            f"tool.grep-find-ls: pinned tsx loader not found under {upstream_root}"
+        )
+    with tempfile.TemporaryDirectory(
+        prefix="pi-search-capture-", dir=upstream_root
+    ) as temp:
+        root = Path(temp).resolve()
+        agent_dir = root / "agent-dir"
+        workspace = root / "workspace"
+        agent_dir.mkdir()
+        workspace.mkdir()
+        (workspace / "src/nested").mkdir(parents=True)
+        (workspace / ".hidden-dir").mkdir()
+        (workspace / "src/alpha.ts").write_text("needle alpha\n", encoding="utf-8")
+        (workspace / "src/nested/beta.ts").write_text("needle beta\n", encoding="utf-8")
+        (workspace / ".hidden.ts").write_text("needle hidden\n", encoding="utf-8")
+        (workspace / "src/ignored.ts").write_text("needle ignored\n", encoding="utf-8")
+        (workspace / ".gitignore").write_text("src/ignored.ts\n", encoding="utf-8")
+        subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "capture@example.invalid"],
+            cwd=workspace,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "capture"], cwd=workspace, check=True
+        )
+        runner = r"""import fs from "node:fs/promises";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { createGrepToolDefinition } from "__UPSTREAM__/packages/coding-agent/src/core/tools/grep.ts";
+import { createFindToolDefinition } from "__UPSTREAM__/packages/coding-agent/src/core/tools/find.ts";
+import { createLsToolDefinition } from "__UPSTREAM__/packages/coding-agent/src/core/tools/ls.ts";
+import { getToolPath } from "__UPSTREAM__/packages/coding-agent/src/utils/tools-manager.ts";
+const cwd = __WORKSPACE__;
+const rg = await getToolPath("rg");
+const fd = await getToolPath("fd");
+if (!rg || !fd) throw new Error("search executable unresolved");
+const provenance = (command) => { const resolved = execFileSync("realpath", [command], { encoding: "utf8" }).trim(); const version = execFileSync(resolved, ["--version"], { encoding: "utf8" }).trim(); const sha256 = execFileSync("sha256sum", [resolved], { encoding: "utf8" }).trim().split("  ")[0]; if (!resolved.startsWith("/") || !/^[0-9a-f]{64}$/.test(sha256)) throw new Error("invalid executable provenance"); return { command, path: resolved, version, sha256 }; };
+const grep = createGrepToolDefinition(cwd);
+const find = createFindToolDefinition(cwd);
+const ls = createLsToolDefinition(cwd);
+const result = { grep: await grep.execute("capture-grep", { pattern: "needle", path: ".", ignoreCase: true, context: 1, limit: 2 }), find: await find.execute("capture-find", { pattern: "**/*.ts", path: ".", limit: 2 }), ls: await ls.execute("capture-ls", { path: ".", limit: 3 }), provenance: { rg: provenance(rg), fd: provenance(fd) } };
+console.log(JSON.stringify(result));
+"""
+        path = root / "runner.mts"
+        path.write_text(
+            runner.replace("__UPSTREAM__", str(Path(upstream_root).resolve())).replace(
+                "__WORKSPACE__", json.dumps(str(workspace))
+            ),
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env.update({"PI_CODING_AGENT_DIR": str(agent_dir), "PI_OFFLINE": "1"})
+        res = subprocess.run(
+            ["node", "--import", loader, str(path)],
+            cwd=upstream_root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        records = _parse_strict_jsonl(res.stdout, res.stderr, res.returncode)
+        if len(records) != 1:
+            raise RuntimeError("tool.grep-find-ls: invalid runner protocol")
+        _validate_search_capture(records[0])
+        return cast(
+            dict[str, Any], _normalize_capture(records[0], str(root), upstream_root)
+        )
 
 
 def _repair_gaxios_metadata(upstream_root: str) -> None:
@@ -726,4 +836,5 @@ ADAPTERS = {
     "resource.untrusted-project": capture_resource_untrusted_project,
     "cli.json-events": capture_cli_json_events,
     "agent.retry-auto-compaction": capture_agent_retry_auto_compaction,
+    "tool.grep-find-ls": capture_tool_grep_find_ls,
 }

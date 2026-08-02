@@ -1,5 +1,6 @@
 import ast
 import inspect
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from m1a_adapters import (
     ADAPTERS,
     _normalize_capture,
     _parse_strict_jsonl,
+    _validate_search_capture,
     capture_agent_retry_auto_compaction,
     capture_agent_serial_tool_loop,
     capture_cli_json_events,
@@ -19,6 +21,7 @@ from m1a_adapters import (
     capture_resource_untrusted_project,
     capture_tool_bash_cancel_descendants,
     capture_tool_edit,
+    capture_tool_grep_find_ls,
     capture_tool_read_bounds,
 )
 
@@ -36,6 +39,7 @@ class CaptureAdapterContracts(unittest.TestCase):
             "resource.untrusted-project": capture_resource_untrusted_project,
             "cli.json-events": capture_cli_json_events,
             "agent.retry-auto-compaction": capture_agent_retry_auto_compaction,
+            "tool.grep-find-ls": capture_tool_grep_find_ls,
         }
         self.assertEqual(ADAPTERS, expected)
 
@@ -131,6 +135,61 @@ class CaptureAdapterContracts(unittest.TestCase):
         )
         self.assertFalse(seen["runner"].exists())
         self.assertFalse(seen["agent_dir"].exists())
+
+    def test_pinned_search_signatures_and_runner_contract(self):
+        source = inspect.getsource(capture_tool_grep_find_ls)
+        for marker in (
+            "createGrepToolDefinition",
+            "createFindToolDefinition",
+            "createLsToolDefinition",
+            'getToolPath("rg")',
+            'getToolPath("fd")',
+            "limit: 2",
+            "cwd=upstream_root",
+            "workspace.mkdir()",
+            "sha256sum",
+            "PI_OFFLINE",
+        ):
+            self.assertIn(marker, source)
+
+    def test_search_runner_uses_js_safe_digest_extraction(self):
+        def fake_run(command, **kwargs):
+            if command[0] == "node":
+                runner = Path(command[-1]).read_text(encoding="utf-8")
+                self.assertIn('.trim().split("  ")[0]', runner)
+                self.assertNotIn(".split(/\\\\s+/)[0]", runner)
+                return type(
+                    "Completed", (), {"stdout": "", "stderr": "", "returncode": 0}
+                )()
+            return type(
+                "Completed", (), {"stdout": "", "stderr": "", "returncode": 0}
+            )()
+
+        with (
+            tempfile.TemporaryDirectory() as upstream,
+            patch.object(m1a_adapters, "_get_tsx_import_arg", return_value="loader"),
+            patch.object(m1a_adapters.subprocess, "run", side_effect=fake_run),
+            self.assertRaises(RuntimeError),
+        ):
+            capture_tool_grep_find_ls(upstream)
+
+    def test_search_provenance_rejects_malformed_types(self):
+        valid = {"grep": {}, "find": {}, "ls": {}, "provenance": {}}
+        for name in ("rg", "fd"):
+            valid["provenance"][name] = {
+                "command": "tool",
+                "path": "/usr/bin/tool",
+                "version": "tool 1",
+                "sha256": "a" * 64,
+            }
+        for field, value in (("command", None), ("version", ""), ("sha256", "A" * 64)):
+            malformed = {
+                **valid,
+                "provenance": {k: dict(v) for k, v in valid["provenance"].items()},
+            }
+            malformed["provenance"]["rg"][field] = value
+            with self.assertRaises(RuntimeError):
+                _validate_search_capture(malformed)
 
     def test_strict_jsonl(self):
         self.assertEqual(

@@ -64,6 +64,18 @@ jobs:
           '
           sha256sum node_modules/gaxios/package.json
 
+      - name: Install and attest search tools
+        if: ${{ github.event.inputs.case == 'tool.grep-find-ls' || github.event.inputs.milestone == 'M1' || github.event.inputs.milestone == 'M1a' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep fd-find
+          for tool in rg fdfind; do
+            command -v "$tool"
+            realpath "$(command -v "$tool")"
+            "$tool" --version | head -n 1
+            sha256sum "$(realpath "$(command -v "$tool")")" | awk '{print $1}' | grep -Eq '^[0-9a-f]{64}$'
+          done
+
       - name: Run reference capture
         env:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
