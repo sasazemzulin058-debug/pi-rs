@@ -90,12 +90,17 @@ jobs:
           toolchain: stable
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
-      - uses: nsetup/action-setup-ndk@v2
-        with:
-          ndk-version: r25c
+      - uses: android-actions/setup-android@v3
+      - name: Install Android NDK
+        run: sdkmanager "ndk;25.2.9519653"
       - name: cargo build release for aarch64-linux-android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: >-
+            ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/
+            prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
         run: >-
-          cargo build --package pi-rs --release
+          cargo build --package pi-coding-agent --release
           --target aarch64-linux-android
       - name: Upload Termux aarch64 artifact
         uses: actions/upload-artifact@v4
