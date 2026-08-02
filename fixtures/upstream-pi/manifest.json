@@ -133,7 +133,7 @@
       "oracle": "upstream-pi"
     },
     "tool.edit": {
-      "captured": false,
+      "captured": true,
       "description": "Exact multi-edit semantics",
       "oracle": "upstream-pi"
     },
