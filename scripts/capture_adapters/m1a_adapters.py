@@ -17,45 +17,70 @@ def _repair_gaxios_metadata(upstream_root: str) -> None:
     if source.exists():
         target.write_bytes(source.read_bytes())
         json.loads(target.read_text(encoding="utf-8"))
+    elif target.exists():
+        # Validate that existing metadata is valid JSON
+        try:
+            json.loads(target.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise RuntimeError(
+                f"gaxios metadata at {target} is corrupted and /tmp/gaxios-repair source is missing"
+            ) from exc
 
 
 def capture_cli_print_basic(upstream_root: str) -> dict[str, Any]:
     """Capture case cli.print.basic using upstream Pi CLI print mode."""
     _repair_gaxios_metadata(upstream_root)
-    cmd = ["node", "--import", "tsx/esm", "packages/coding-agent/src/cli.ts", "--print", "hello"]
+    cmd = [
+        "node",
+        "--import",
+        "tsx/esm",
+        "packages/coding-agent/src/cli.ts",
+        "--print",
+        "hello",
+    ]
     res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
     if res.returncode != 0:
-        raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
-    raw = {
-        "exit_code": res.returncode,
-        "stdout": res.stdout,
-        "stderr": res.stderr
-    }
+        raise RuntimeError(
+            f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"
+        )
+    raw = {"exit_code": res.returncode, "stdout": res.stdout, "stderr": res.stderr}
     return normalize_structure(raw)
+
 
 def capture_agent_serial_tool_loop(upstream_root: str) -> dict[str, Any]:
     """Capture case agent.serial-tool-loop using scripted provider or print mode with tool calls."""
     _repair_gaxios_metadata(upstream_root)
     # Run upstream CLI in print mode with scripted prompt requiring sequential tool calls
-    cmd = ["node", "--import", "tsx/esm", "packages/coding-agent/src/cli.ts", "--print", "read file test.txt"]
+    cmd = [
+        "node",
+        "--import",
+        "tsx/esm",
+        "packages/coding-agent/src/cli.ts",
+        "--print",
+        "read file test.txt",
+    ]
     res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
     if res.returncode != 0:
-        raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
-    raw = {
-        "exit_code": res.returncode,
-        "stdout": res.stdout,
-        "stderr": res.stderr
-    }
+        raise RuntimeError(
+            f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"
+        )
+    raw = {"exit_code": res.returncode, "stdout": res.stdout, "stderr": res.stderr}
     return normalize_structure(raw)
 
+
 def capture_provider_openai_chat_fragmented_sse(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError("real upstream capture required: provider.openai-chat.fragmented-sse")
+    raise NotImplementedError(
+        "real upstream capture required: provider.openai-chat.fragmented-sse"
+    )
+
 
 def capture_tool_read_bounds(upstream_root: str) -> dict[str, Any]:
     """Capture case tool.read.bounds by invoking upstream createReadToolDefinition on disposable fixture."""
     lines = [f"line {i}" for i in range(1, 21)]
     fixture_content = "\n".join(lines)
-    with tempfile.TemporaryDirectory(prefix="capture-read-", dir=upstream_root) as temp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix="capture-read-", dir=upstream_root
+    ) as temp_dir:
         fixture_path = Path(temp_dir) / "fixture.txt"
         script_path = Path(temp_dir) / "capture-read.ts"
         fixture_path.write_text(fixture_content, encoding="utf-8")
@@ -88,16 +113,28 @@ console.log(JSON.stringify({{ success, error_case }}));
         try:
             return normalize_structure(json.loads(res.stdout.strip()))
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"upstream tool.read.bounds returned invalid JSON: {res.stdout!r}") from exc
+            raise RuntimeError(
+                f"upstream tool.read.bounds returned invalid JSON: {res.stdout!r}"
+            ) from exc
+
 
 def capture_tool_bash_cancel_descendants(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError("real upstream capture required: tool.bash.cancel-descendants")
+    raise NotImplementedError(
+        "real upstream capture required: tool.bash.cancel-descendants"
+    )
+
 
 def capture_resource_context_precedence(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError("real upstream capture required: resource.context-precedence")
+    raise NotImplementedError(
+        "real upstream capture required: resource.context-precedence"
+    )
+
 
 def capture_resource_untrusted_project(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError("real upstream capture required: resource.untrusted-project")
+    raise NotImplementedError(
+        "real upstream capture required: resource.untrusted-project"
+    )
+
 
 ADAPTERS = {
     "cli.print.basic": capture_cli_print_basic,
