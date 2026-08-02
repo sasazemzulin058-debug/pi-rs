@@ -1,0 +1,49 @@
+{
+  "grep": {
+    "content": [
+      {
+        "type": "text",
+        "text": ".hidden.ts:1: needle hidden\n.hidden.ts-2- \nsrc/alpha.ts:1: needle alpha\nsrc/alpha.ts-2- \n\n[2 matches limit reached. Use limit=4 for more, or refine pattern]"
+      }
+    ],
+    "details": {
+      "matchLimitReached": 2
+    }
+  },
+  "find": {
+    "content": [
+      {
+        "type": "text",
+        "text": ".hidden.ts\nsrc/alpha.ts\n\n[2 results limit reached. Use limit=4 for more, or refine pattern]"
+      }
+    ],
+    "details": {
+      "resultLimitReached": 2
+    }
+  },
+  "ls": {
+    "content": [
+      {
+        "type": "text",
+        "text": ".git/\n.gitignore\n.hidden-dir/\n\n[3 entries limit reached. Use limit=6 for more]"
+      }
+    ],
+    "details": {
+      "entryLimitReached": 3
+    }
+  },
+  "provenance": {
+    "rg": {
+      "command": "__CAPTURE_ROOT__/agent-dir/bin/rg",
+      "path": "/usr/bin/rg",
+      "version": "ripgrep 14.1.0\n\nfeatures:-simd-accel,+pcre2\nsimd(compile):+SSE2,-SSSE3,-AVX2\nsimd(runtime):+SSE2,+SSSE3,+AVX2\n\nPCRE2 10.42 is available (JIT is available)",
+      "sha256": "be2fbcdd985161603bfa268c7647eec670b9e94374f0e972da708d7de670a8fb"
+    },
+    "fd": {
+      "command": "__CAPTURE_ROOT__/agent-dir/bin/fd",
+      "path": "/usr/lib/cargo/bin/fd",
+      "version": "fdfind 9.0.0",
+      "sha256": "bae1d3df0fbda9e59b752a8b77b7dec4ae6b767ae39a686189b6232d4cf4d8e7"
+    }
+  }
+}

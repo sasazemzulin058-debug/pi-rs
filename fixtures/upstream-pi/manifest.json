@@ -11,12 +11,12 @@
     "host": "x86_64",
     "nodeVersion": "v24.18.0",
     "bunVersion": "unknown",
-    "digest": "sha256:33c91b31f27b69bc2324c964693b3717145c3a7e646a1bbfa290063e3e9111b4",
-    "capturedAt": "2026-08-02T17:42:29.091633+00:00",
+    "digest": "sha256:f0e07952294ddc87d25dbcd00280c2c03b8e3d5de5c54977be1c5afb7e108773",
+    "capturedAt": "2026-08-02T21:07:23.944672+00:00",
     "captureScope": {
       "milestone": "M1",
       "caseIds": [
-        "cli.json-events"
+        "tool.grep-find-ls"
       ]
     }
   },
@@ -144,7 +144,7 @@
       "oracle": "upstream-pi"
     },
     "tool.grep-find-ls": {
-      "captured": false,
+      "captured": true,
       "description": "Ignored-path discovery and bounded search",
       "oracle": "upstream-pi"
     },
