@@ -1,0 +1,13 @@
+{
+  "success": {
+    "content": [
+      {
+        "type": "text",
+        "text": "line 5\nline 6\nline 7\n\n[13 more lines in file. Use offset=8 to continue.]"
+      }
+    ]
+  },
+  "error_case": {
+    "error": "Error: Offset 100 is beyond end of file (20 lines total)"
+  }
+}

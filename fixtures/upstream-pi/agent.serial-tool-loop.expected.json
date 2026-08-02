@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "The file `./node_modules/tar-fs/test/fixtures/b/a/test.txt` contains:\n\n```text\ntest\n```\n",
+  "stderr": ""
+}
