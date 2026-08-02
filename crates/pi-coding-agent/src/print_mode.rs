@@ -70,11 +70,7 @@ pub async fn run_print(
         &session,
     )?;
     if json_mode {
-        emit_json(&json!({
-            "type": "agent_end",
-            "stopped_at_turn_limit": res.stopped_at_turn_limit,
-            "message_count": res.messages.len(),
-        }));
+        emit_agent_end(res.stopped_at_turn_limit, res.messages.len());
     } else if res.stopped_at_turn_limit {
         eprintln!("(stopped at max turns)");
     }
@@ -113,10 +109,18 @@ async fn run_human(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) {
 }
 
 async fn run_json(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) {
+    let mut stdout = std::io::stdout();
+    run_json_to(rx, &mut stdout).await;
+}
+
+async fn run_json_to<W: Write + ?Sized>(
+    rx: &mut mpsc::UnboundedReceiver<AgentEvent>,
+    writer: &mut W,
+) {
     while let Some(ev) = rx.recv().await {
         let value = event_to_json(&ev);
         if !value.is_null() {
-            emit_json(&value);
+            emit_json_to(&value, writer);
         }
     }
 }
@@ -179,12 +183,91 @@ fn event_to_json(ev: &AgentEvent) -> serde_json::Value {
     }
 }
 
-fn emit_json(value: &serde_json::Value) {
+fn emit_agent_end(stopped_at_turn_limit: bool, message_count: usize) {
+    let mut stdout = std::io::stdout();
+    emit_agent_end_to(stopped_at_turn_limit, message_count, &mut stdout);
+}
+
+fn emit_agent_end_to<W: Write + ?Sized>(
+    stopped_at_turn_limit: bool,
+    message_count: usize,
+    writer: &mut W,
+) {
+    emit_json_to(
+        &json!({
+            "type": "agent_end",
+            "stopped_at_turn_limit": stopped_at_turn_limit,
+            "message_count": message_count,
+        }),
+        writer,
+    );
+}
+
+fn emit_json_to<W: Write + ?Sized>(value: &serde_json::Value, writer: &mut W) {
     let line = match serde_json::to_string(value) {
         Ok(s) => s,
         Err(_) => return,
     };
-    let mut stdout = std::io::stdout();
-    let _ = writeln!(stdout, "{line}");
-    let _ = stdout.flush();
+    let _ = writeln!(writer, "{line}");
+    let _ = writer.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn json_events_are_lines_and_end_is_terminal() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tx.send(AgentEvent::AgentStart).unwrap();
+        tx.send(AgentEvent::TextDelta {
+            delta: "hello\nworld".into(),
+        })
+        .unwrap();
+        tx.send(AgentEvent::AgentEnd { messages: vec![] }).unwrap();
+        drop(tx);
+
+        let mut output = Vec::new();
+        run_json_to(&mut rx, &mut output).await;
+        emit_agent_end_to(false, 2, &mut output);
+        let lines: Vec<_> = std::str::from_utf8(&output).unwrap().lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(lines[0]).unwrap()["type"],
+            "agent_start"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(lines[1]).unwrap()["type"],
+            "text_delta"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(lines[2]).unwrap()["type"],
+            "agent_end"
+        );
+        assert!(!std::str::from_utf8(&output)
+            .unwrap()
+            .contains("hello\nworld"));
+        assert!(output.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn json_renderer_emits_final_agent_end_shape() {
+        let mut output = Vec::new();
+        emit_agent_end_to(false, 2, &mut output);
+        let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(value["type"], "agent_end");
+        assert_eq!(value["message_count"], 2);
+    }
+
+    #[test]
+    fn json_renderer_does_not_write_human_output() {
+        let mut output = Vec::new();
+        emit_json_to(
+            &json!({"type": "assistant_message", "text": "ok"}),
+            &mut output,
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(value, json!({"type": "assistant_message", "text": "ok"}));
+        assert!(!std::str::from_utf8(&output).unwrap().contains("→"));
+    }
 }
