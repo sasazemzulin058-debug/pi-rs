@@ -60,6 +60,8 @@ fn enc(ev: AgentEvent) -> serde_json::Value {
             "tool_name": tool_name,
             "reason": reason,
         }),
+        AgentEvent::RetryReset => json!({"type": "retry_reset"}),
+        AgentEvent::AutoCompacted => json!({"type": "auto_compacted"}),
         AgentEvent::AgentEnd { .. } => serde_json::Value::Null,
     }
 }

@@ -33,4 +33,23 @@ pub enum Error {
     Other(String),
 }
 
+pub fn is_context_overflow_message(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("context_length_exceeded")
+        || lower.contains("context_window_exceeded")
+        || lower.contains("maximum context length")
+        || lower.contains("prompt is too long")
+        || lower.contains("token limit exceeded")
+}
+
+impl Error {
+    pub fn is_context_overflow(&self) -> bool {
+        match self {
+            Error::ProviderError { body, .. } => is_context_overflow_message(body),
+            Error::RetryExhausted { source, .. } => source.is_context_overflow(),
+            _ => false,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;

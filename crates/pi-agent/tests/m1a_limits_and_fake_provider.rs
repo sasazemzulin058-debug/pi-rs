@@ -126,6 +126,52 @@ async fn test_agent_loop_turn_limit_enforcement() {
 }
 
 #[tokio::test]
+async fn test_agent_retries_context_overflow_once() {
+    let model = test_model();
+    let done = AssistantMessageEvent::Done {
+        reason: StopReason::Stop,
+        message: test_assistant_message(vec![Content::text("ok")], StopReason::Stop),
+    };
+    let factory = Arc::new(FakeProviderFactory::new_sequence(vec![
+        vec![Err(pi_ai::Error::ProviderError {
+            status: 400,
+            body: "context_length_exceeded".into(),
+        })],
+        vec![Ok(done)],
+    ]));
+    let cfg = AgentConfig::new(model, "system").with_provider_factory(factory);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // We need messages length > 2 so that compact_messages returns true,
+    // otherwise the agent loop fails with context overflow instead of retrying,
+    // because it detects compaction did not reduce the history.
+    let messages = vec![
+        Message::user_text("system-like or user initial query"),
+        Message::Assistant(test_assistant_message(
+            vec![Content::text("assistant response 1")],
+            StopReason::Stop,
+        )),
+        Message::user_text("user response 2"),
+    ];
+    let result = pi_agent::run_agent_with_history(&cfg, messages, Some(tx))
+        .await
+        .unwrap();
+    assert!(result
+        .messages
+        .iter()
+        .any(|m| matches!(m, Message::Assistant(_))));
+    assert!(matches!(
+        rx.recv().await,
+        Some(pi_agent::AgentEvent::UserMessage { .. })
+    ));
+    let mut compacted = false;
+    while let Ok(event) = rx.try_recv() {
+        compacted |= matches!(event, pi_agent::AgentEvent::AutoCompacted);
+    }
+    assert!(compacted);
+}
+
+#[tokio::test]
 async fn test_agent_loop_zero_turn_limit() {
     let model = test_model();
     let events = vec![AssistantMessageEvent::Done {
@@ -226,29 +272,20 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
     let test_path_str = test_path.to_string_lossy().to_string();
 
     let model = test_model();
-    let events = vec![
-        AssistantMessageEvent::Done {
-            reason: StopReason::ToolUse,
-            message: test_assistant_message(
-                vec![Content::ToolCall {
-                    id: "call_1".into(),
-                    name: "write".into(),
-                    arguments: serde_json::json!({
-                        "path": test_path_str,
-                        "content": "serial step 1"
-                    }),
-                }],
-                StopReason::ToolUse,
-            ),
-        },
-        AssistantMessageEvent::Done {
-            reason: StopReason::Stop,
-            message: test_assistant_message(
-                vec![Content::text("done serial tool call")],
-                StopReason::Stop,
-            ),
-        },
-    ];
+    let events = vec![AssistantMessageEvent::Done {
+        reason: StopReason::ToolUse,
+        message: test_assistant_message(
+            vec![Content::ToolCall {
+                id: "call_1".into(),
+                name: "write".into(),
+                arguments: serde_json::json!({
+                    "path": test_path_str,
+                    "content": "serial step 1"
+                }),
+            }],
+            StopReason::ToolUse,
+        ),
+    }];
 
     let counting_factory = Arc::new(CountingFakeProviderFactory {
         inner: FakeProviderFactory::new(events),
@@ -295,8 +332,289 @@ async fn test_serial_tool_loop_transcript_and_provider_calls() {
     assert!(run.stopped_at_turn_limit);
     assert!(matches!(run.messages[3], Message::Assistant(_)));
     assert!(matches!(run.messages[4], Message::ToolResult(_)));
-
     if test_dir.exists() {
         let _ = std::fs::remove_dir_all(&test_dir);
     }
+}
+
+#[tokio::test]
+async fn test_compaction_retains_proper_tool_group() {
+    let model = test_model();
+
+    // Construct a long history that includes:
+    // 0: User initial message
+    // 1: Assistant message with tool call
+    // 2: ToolResult message
+    // 3: User message
+    // 4: Assistant message with tool call
+    // 5: ToolResult message (this is the last message)
+    let messages = vec![
+        Message::User {
+            content: vec![Content::text("initial user message")],
+            timestamp: now_ms(),
+        },
+        Message::Assistant(test_assistant_message(
+            vec![Content::ToolCall {
+                id: "call_old".into(),
+                name: "write".into(),
+                arguments: serde_json::json!({}),
+            }],
+            StopReason::ToolUse,
+        )),
+        Message::ToolResult(pi_ai::ToolResultMessage {
+            tool_call_id: "call_old".into(),
+            tool_name: "write".into(),
+            content: vec![Content::text("old tool result")],
+            is_error: false,
+            timestamp: now_ms(),
+        }),
+        Message::User {
+            content: vec![Content::text("follow up user message")],
+            timestamp: now_ms(),
+        },
+        Message::Assistant(test_assistant_message(
+            vec![Content::ToolCall {
+                id: "call_last".into(),
+                name: "write".into(),
+                arguments: serde_json::json!({}),
+            }],
+            StopReason::ToolUse,
+        )),
+        Message::ToolResult(pi_ai::ToolResultMessage {
+            tool_call_id: "call_last".into(),
+            tool_name: "write".into(),
+            content: vec![Content::text("last tool result")],
+            is_error: false,
+            timestamp: now_ms(),
+        }),
+    ];
+
+    let done = AssistantMessageEvent::Done {
+        reason: StopReason::Stop,
+        message: test_assistant_message(vec![Content::text("ok")], StopReason::Stop),
+    };
+
+    // First attempt fails with context overflow. Compaction runs.
+    // Compaction must retain message 0 (initial), and the last tool group (4 and 5).
+    // Specifically:
+    // Message 0: User ("initial user message")
+    // Message 4: Assistant with "call_last"
+    // Message 5: ToolResult for "call_last"
+    // Other messages (1, 2, 3) must be discarded.
+    let factory = Arc::new(FakeProviderFactory::new_sequence(vec![
+        vec![Err(pi_ai::Error::ProviderError {
+            status: 400,
+            body: "context_length_exceeded".into(),
+        })],
+        vec![Ok(done)],
+    ]));
+    let cfg = AgentConfig::new(model, "system").with_provider_factory(factory);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let result = pi_agent::run_agent_with_history(&cfg, messages, Some(tx))
+        .await
+        .unwrap();
+
+    // Verify history compaction reduced the history correctly
+    // The final result should contain compacted messages + the new assistant message "ok".
+    // Compacted messages should be: [initial_user (0), assistant_last (4), tool_result_last (5)] -> 3 messages.
+    // Plus the new assistant "ok" message -> 4 messages total.
+    assert_eq!(result.messages.len(), 4);
+
+    match &result.messages[0] {
+        Message::User { content, .. } => {
+            assert_eq!(content[0].as_text().unwrap(), "initial user message")
+        }
+        _ => panic!("Expected initial user message at index 0"),
+    }
+    match &result.messages[1] {
+        Message::Assistant(a) => {
+            assert!(matches!(&a.content[0], Content::ToolCall { id, .. } if id == "call_last"));
+        }
+        _ => panic!("Expected last assistant tool call at index 1"),
+    }
+    match &result.messages[2] {
+        Message::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_last");
+        }
+        _ => panic!("Expected last tool result at index 2"),
+    }
+    match &result.messages[3] {
+        Message::Assistant(a) => {
+            assert_eq!(a.content[0].as_text().unwrap(), "ok");
+        }
+        _ => panic!("Expected final assistant message at index 3"),
+    }
+
+    let mut compacted = false;
+    while let Ok(event) = rx.try_recv() {
+        compacted |= matches!(event, pi_agent::AgentEvent::AutoCompacted);
+    }
+    assert!(compacted);
+}
+
+#[tokio::test]
+async fn test_second_overflow_terminates_without_another_retry() {
+    let model = test_model();
+
+    // We start with 3 messages so first compaction is allowed.
+    let messages = vec![
+        Message::user_text("system-like or user initial query"),
+        Message::Assistant(test_assistant_message(
+            vec![Content::text("assistant response 1")],
+            StopReason::Stop,
+        )),
+        Message::user_text("user response 2"),
+    ];
+
+    // Sequence of provider streams:
+    // 1st stream fails with overflow -> triggers compaction -> messages size reduced.
+    // 2nd stream fails with overflow -> tries to compact, but it either fails to reduce further or compaction_retried is already true.
+    // In any case, it must terminate with error rather than retrying indefinitely.
+    let factory = Arc::new(FakeProviderFactory::new_sequence(vec![
+        vec![Err(pi_ai::Error::ProviderError {
+            status: 400,
+            body: "context_length_exceeded".into(),
+        })],
+        vec![Err(pi_ai::Error::ProviderError {
+            status: 400,
+            body: "context_length_exceeded".into(),
+        })],
+    ]));
+    let cfg = AgentConfig::new(model, "system").with_provider_factory(factory);
+
+    let result = pi_agent::run_agent_with_history(&cfg, messages, None).await;
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    assert!(
+        err.to_string().contains("context_length_exceeded")
+            || err.to_string().contains("provider returned an error")
+    );
+}
+
+#[tokio::test]
+async fn test_streaming_deltas_retry_reset_protocol() {
+    let model = test_model();
+
+    let messages = vec![
+        Message::user_text("system-like or user initial query"),
+        Message::Assistant(test_assistant_message(
+            vec![Content::text("assistant response 1")],
+            StopReason::Stop,
+        )),
+        Message::user_text("user response 2"),
+    ];
+
+    let done = AssistantMessageEvent::Done {
+        reason: StopReason::Stop,
+        message: test_assistant_message(vec![Content::text("ok")], StopReason::Stop),
+    };
+
+    // Stream 1 emits normal TextDelta immediately, then fails with context overflow.
+    // Stream 2 emits TextDelta then Done.
+    // Must observe: TextDelta("overflow delta"), RetryReset, AutoCompacted, TextDelta("good delta").
+    let factory = Arc::new(FakeProviderFactory::new_sequence(vec![
+        vec![
+            Ok(AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "overflow delta ".into(),
+            }),
+            Err(pi_ai::Error::ProviderError {
+                status: 400,
+                body: "context_length_exceeded".into(),
+            }),
+        ],
+        vec![
+            Ok(AssistantMessageEvent::TextDelta {
+                content_index: 0,
+                delta: "good delta".into(),
+            }),
+            Ok(done),
+        ],
+    ]));
+    let cfg = AgentConfig::new(model, "system").with_provider_factory(factory);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let result = pi_agent::run_agent_with_history(&cfg, messages, Some(tx))
+        .await
+        .unwrap();
+    assert_eq!(result.messages.len(), 2);
+
+    let mut events = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
+    }
+
+    let delta_reset_indices: Vec<(usize, String)> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, ev)| match ev {
+            pi_agent::AgentEvent::TextDelta { delta } => Some((i, format!("delta:{delta}"))),
+            pi_agent::AgentEvent::RetryReset => Some((i, "reset".into())),
+            pi_agent::AgentEvent::AutoCompacted => Some((i, "compacted".into())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        delta_reset_indices
+            .iter()
+            .map(|(_, s)| s.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "delta:overflow delta ",
+            "reset",
+            "compacted",
+            "delta:good delta"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_compacted_messages_provider_validity() {
+    use pi_ai::providers;
+
+    let anthropic_model = Model::anthropic_claude_sonnet_4_6();
+
+    let raw_messages = vec![
+        Message::user_text("initial instruction"),
+        Message::Assistant(test_assistant_message(
+            vec![Content::text("reply 1")],
+            StopReason::Stop,
+        )),
+        Message::user_text("followup query"),
+    ];
+
+    let done = AssistantMessageEvent::Done {
+        reason: StopReason::Stop,
+        message: test_assistant_message(vec![Content::text("ok")], StopReason::Stop),
+    };
+
+    let factory = Arc::new(FakeProviderFactory::new_sequence(vec![
+        vec![Err(pi_ai::Error::ProviderError {
+            status: 400,
+            body: "context_length_exceeded".into(),
+        })],
+        vec![Ok(done)],
+    ]));
+    let cfg = AgentConfig::new(test_model(), "system").with_provider_factory(factory);
+
+    let result = pi_agent::run_agent_with_history(&cfg, raw_messages, None)
+        .await
+        .unwrap();
+
+    let ctx = pi_ai::Context {
+        system_prompt: Some("system prompt".into()),
+        messages: result.messages,
+        tools: vec![],
+    };
+    let opts = pi_ai::StreamOptions::default();
+
+    // Verify Anthropic serializer accepts compacted history
+    let anthropic_body = providers::anthropic::build_request_body(&anthropic_model, &ctx, &opts);
+    let ant_msgs = anthropic_body["messages"].as_array().unwrap();
+    // Compacted history merged user(0) + user(2) into 1 User message, plus final assistant response = 2 total
+    assert_eq!(ant_msgs.len(), 2);
+    assert_eq!(ant_msgs[0]["role"], "user");
+    assert_eq!(ant_msgs[1]["role"], "assistant");
 }

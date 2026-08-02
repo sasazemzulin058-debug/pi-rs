@@ -59,55 +59,112 @@ pub async fn run_agent_with_history(
         turn += 1;
         emit(&events, AgentEvent::TurnStart);
 
-        let ctx = Context {
-            system_prompt: Some(config.system_prompt.clone()),
-            messages: messages.clone(),
-            tools: tool_defs.clone(),
-        };
-
-        let mut options = config.stream_options.clone();
-        if options.reasoning.is_none() && config.thinking_level != pi_ai::ThinkingLevel::Off {
-            options.reasoning = Some(config.thinking_level);
-        }
-
-        let mut stream = config
-            .provider_factory
-            .stream(&config.model, &ctx, &options)
-            .await?;
-
-        let mut final_message: Option<pi_ai::AssistantMessage> = None;
-        let mut stop = StopReason::Stop;
-
-        while let Some(ev) = stream.next().await {
-            let ev = ev?;
-            match ev {
-                AssistantMessageEvent::Done { reason, message } => {
-                    stop = reason;
-                    final_message = Some(message);
-                    break;
-                }
-                AssistantMessageEvent::Error { reason: _, error } => {
-                    let err_msg = error
-                        .error_message
-                        .clone()
-                        .unwrap_or_else(|| "provider error".into());
-                    return Err(AgentError::Other(err_msg));
-                }
-                AssistantMessageEvent::TextDelta { delta, .. } => {
-                    emit(&events, AgentEvent::TextDelta { delta });
-                }
-                AssistantMessageEvent::ThinkingDelta { delta, .. } => {
-                    emit(&events, AgentEvent::ThinkingDelta { delta });
-                }
-                _ => {}
+        let mut compaction_retried = false;
+        let msg = 'attempt: loop {
+            let ctx = Context {
+                system_prompt: Some(config.system_prompt.clone()),
+                messages: messages.clone(),
+                tools: tool_defs.clone(),
+            };
+            let mut options = config.stream_options.clone();
+            if options.reasoning.is_none() && config.thinking_level != pi_ai::ThinkingLevel::Off {
+                options.reasoning = Some(config.thinking_level);
             }
-        }
-
-        let Some(msg) = final_message else {
+            let mut stream = match config
+                .provider_factory
+                .stream(&config.model, &ctx, &options)
+                .await
+            {
+                Ok(stream) => stream,
+                Err(error) if !compaction_retried && error.is_context_overflow() => {
+                    if compact_messages(&mut messages) {
+                        compaction_retried = true;
+                        emit(&events, AgentEvent::AutoCompacted);
+                        continue;
+                    } else {
+                        return Err(error.into());
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let mut final_message = None;
+            let mut stop = StopReason::Stop;
+            let mut has_emitted_deltas = false;
+            while let Some(ev) = stream.next().await {
+                let ev = match ev {
+                    Ok(ev) => ev,
+                    Err(error) if !compaction_retried && error.is_context_overflow() => {
+                        if compact_messages(&mut messages) {
+                            compaction_retried = true;
+                            if has_emitted_deltas {
+                                emit(&events, AgentEvent::RetryReset);
+                            }
+                            emit(&events, AgentEvent::AutoCompacted);
+                            continue 'attempt;
+                        } else {
+                            return Err(error.into());
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                };
+                match ev {
+                    AssistantMessageEvent::Done { reason, message } => {
+                        stop = reason;
+                        final_message = Some(message);
+                        break;
+                    }
+                    AssistantMessageEvent::Error { error, .. } => {
+                        let overflow = error
+                            .error_message
+                            .as_deref()
+                            .is_some_and(pi_ai::error::is_context_overflow_message);
+                        if !compaction_retried && overflow {
+                            if compact_messages(&mut messages) {
+                                compaction_retried = true;
+                                if has_emitted_deltas {
+                                    emit(&events, AgentEvent::RetryReset);
+                                }
+                                emit(&events, AgentEvent::AutoCompacted);
+                                continue 'attempt;
+                            } else {
+                                return Err(AgentError::Other(
+                                    error
+                                        .error_message
+                                        .unwrap_or_else(|| "provider error".into()),
+                                ));
+                            }
+                        }
+                        return Err(AgentError::Other(
+                            error
+                                .error_message
+                                .unwrap_or_else(|| "provider error".into()),
+                        ));
+                    }
+                    AssistantMessageEvent::TextDelta {
+                        content_index: _,
+                        delta,
+                    } => {
+                        has_emitted_deltas = true;
+                        emit(&events, AgentEvent::TextDelta { delta });
+                    }
+                    AssistantMessageEvent::ThinkingDelta {
+                        content_index: _,
+                        delta,
+                    } => {
+                        has_emitted_deltas = true;
+                        emit(&events, AgentEvent::ThinkingDelta { delta });
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(message) = final_message {
+                break (message, stop);
+            }
             return Err(AgentError::Other(
                 "provider stream produced no terminal event".into(),
             ));
         };
+        let (msg, stop) = msg;
 
         let assistant_message = Message::Assistant(msg.clone());
         messages.push(assistant_message.clone());
@@ -235,6 +292,101 @@ pub async fn run_agent_with_history(
         messages,
         stopped_at_turn_limit,
     })
+}
+
+fn compact_messages(messages: &mut Vec<Message>) -> bool {
+    // Preserve valid groups:
+    // UserMessage must precede AssistantMessage, AssistantMessage with ToolCall must precede ToolResult.
+    // If we have history, we must keep at least the initial user query and the last turn.
+    // Let's implement a safe compaction that preserves protocol groups and reduces history.
+    // If messages.len() <= 2, we cannot really reduce it further without losing the initial query/context.
+    if messages.len() <= 2 {
+        return false;
+    }
+
+    // We want to reduce. The simplest robust strategy is:
+    // Keep the very first message (usually the initial user instruction).
+    // Find the latest message sequence that is valid (assistant + tool result if tool execution was ongoing, or just assistant).
+    // Specifically, let's keep the first message.
+    // Let's keep the last N messages that form a complete protocol unit.
+    // If the last message is a ToolResult, we MUST also keep the preceding Assistant message that has the ToolCall.
+    // Let's scan backwards:
+    let mut indices_to_keep = std::collections::BTreeSet::new();
+    indices_to_keep.insert(0); // Always keep the initial message
+
+    let len = messages.len();
+    if len > 1 {
+        let last_idx = len - 1;
+        indices_to_keep.insert(last_idx);
+
+        // If the last message is a ToolResult, find all other ToolResult messages or the Assistant message that started the tool calls.
+        // Actually, we can look at the sequence backwards and find the last Assistant message and all ToolResults that follow it.
+        if let Message::ToolResult(tr) = &messages[last_idx] {
+            // Find the preceding Assistant message that contains this tool_call_id
+            let mut found_assistant = false;
+            for i in (0..last_idx).rev() {
+                if let Message::Assistant(a) = &messages[i] {
+                    if a.content.iter().any(|c| match c {
+                        Content::ToolCall { id, .. } => id == &tr.tool_call_id,
+                        _ => false,
+                    }) {
+                        indices_to_keep.insert(i);
+                        // Also keep any other tool results for tool calls in this assistant message to keep it balanced, or just keep all messages from that assistant message onwards.
+                        for j in i..len {
+                            indices_to_keep.insert(j);
+                        }
+                        found_assistant = true;
+                        break;
+                    }
+                }
+            }
+            if !found_assistant {
+                // Fallback: just keep the last assistant message
+                for i in (0..last_idx).rev() {
+                    if let Message::Assistant(_) = &messages[i] {
+                        indices_to_keep.insert(i);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // If indices_to_keep contains all messages, we didn't reduce anything!
+    if indices_to_keep.len() >= messages.len() {
+        return false;
+    }
+
+    let old_len = messages.len();
+    let mut kept_messages = Vec::new();
+    for (i, msg) in messages.iter().enumerate() {
+        if indices_to_keep.contains(&i) {
+            kept_messages.push(msg.clone());
+        }
+    }
+
+    // Combine adjacent User messages after dropping intermediate turns to preserve valid schema
+    let mut new_messages = Vec::new();
+    for msg in kept_messages {
+        if let Some(Message::User {
+            content: last_content,
+            ..
+        }) = new_messages.last_mut()
+        {
+            if let Message::User {
+                content: new_content,
+                ..
+            } = &msg
+            {
+                last_content.extend(new_content.clone());
+                continue;
+            }
+        }
+        new_messages.push(msg);
+    }
+
+    *messages = new_messages;
+    messages.len() < old_len
 }
 
 fn emit(sink: &Option<mpsc::UnboundedSender<AgentEvent>>, ev: AgentEvent) {

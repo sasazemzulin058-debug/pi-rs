@@ -107,6 +107,17 @@ pub async fn run_interactive(
                 AgentEvent::PermissionDenied { tool_name, reason } => {
                     eprintln!("  ✗ {tool_name} denied: {reason}");
                 }
+                AgentEvent::RetryReset => {
+                    let _ = write!(stdout, "\r\x1b[K");
+                    let _ = stdout.flush();
+                }
+                AgentEvent::AutoCompacted => {
+                    let _ = write!(
+                        stdout,
+                        "\r\x1b[K(context overflow; retrying with compacted history...)\n"
+                    );
+                    let _ = stdout.flush();
+                }
                 _ => {}
             }
         }

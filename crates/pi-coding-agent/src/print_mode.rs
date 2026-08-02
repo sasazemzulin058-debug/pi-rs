@@ -103,6 +103,17 @@ async fn run_human(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) {
             AgentEvent::PermissionDenied { tool_name, reason } => {
                 eprintln!("✗ permission denied for {tool_name}: {reason}");
             }
+            AgentEvent::RetryReset => {
+                let _ = write!(stdout, "\r\x1b[K");
+                let _ = stdout.flush();
+            }
+            AgentEvent::AutoCompacted => {
+                let _ = write!(
+                    stdout,
+                    "\r\x1b[K(context overflow; retrying with compacted history...)\n"
+                );
+                let _ = stdout.flush();
+            }
             _ => {}
         }
     }
@@ -177,6 +188,8 @@ fn event_to_json(ev: &AgentEvent) -> serde_json::Value {
             "tool_name": tool_name,
             "reason": reason,
         }),
+        AgentEvent::RetryReset => json!({"type": "retry_reset"}),
+        AgentEvent::AutoCompacted => json!({"type": "auto_compacted"}),
         // AgentEnd is emitted by run_print after the channel closes so we know
         // the final state (stopped_at_turn_limit, etc.).
         AgentEvent::AgentEnd { .. } => serde_json::Value::Null,

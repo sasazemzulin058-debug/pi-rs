@@ -153,6 +153,10 @@ pub enum AgentEvent {
     },
     TurnStart,
     TurnEnd,
+    /// Assistant stream failed with retryable overflow; clear accumulated stream before retrying.
+    RetryReset,
+    /// Context history was compacted before one bounded retry.
+    AutoCompacted,
     AssistantMessage {
         message: Message,
     },

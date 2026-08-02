@@ -116,3 +116,100 @@ fn cache_retention_none_keeps_legacy_shape() {
         assert!(b.get("cache_control").is_none());
     }
 }
+
+#[test]
+fn test_compacted_messages_serializer_validity_all_providers() {
+    use pi_ai::providers::{anthropic, google, openai, openai_responses};
+    use serde_json::json;
+
+    let tool_call_id = "call_abc123";
+    let compacted_messages = vec![
+        Message::user_text("initial instruction"),
+        Message::Assistant(pi_ai::AssistantMessage {
+            content: vec![
+                Content::text("I will call a tool."),
+                Content::ToolCall {
+                    id: tool_call_id.to_string(),
+                    name: "read_file".to_string(),
+                    arguments: json!({"path": "foo.txt"}),
+                },
+            ],
+            api: "test".into(),
+            provider: "test".into(),
+            model: "test".into(),
+            usage: Default::default(),
+            stop_reason: pi_ai::StopReason::ToolUse,
+            error_message: None,
+            timestamp: 0,
+        }),
+        Message::ToolResult(pi_ai::ToolResultMessage {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: "read_file".to_string(),
+            content: vec![Content::text("file content")],
+            is_error: false,
+            timestamp: 0,
+        }),
+    ];
+
+    let ctx = Context {
+        system_prompt: Some("system prompt".into()),
+        messages: compacted_messages,
+        tools: vec![],
+    };
+    let options = StreamOptions::default();
+
+    // Anthropic
+    let anth_model = Model::anthropic_claude_sonnet_4_6();
+    let anth_body = anthropic::build_request_body(&anth_model, &ctx, &options);
+    let anth_msgs = anth_body["messages"].as_array().unwrap();
+    assert_eq!(anth_msgs.len(), 3);
+    assert_eq!(anth_msgs[1]["role"], "assistant");
+    assert_eq!(anth_msgs[1]["content"][1]["type"], "tool_use");
+    assert_eq!(anth_msgs[1]["content"][1]["id"], tool_call_id);
+    assert_eq!(anth_msgs[2]["role"], "user");
+    assert_eq!(anth_msgs[2]["content"][0]["type"], "tool_result");
+    assert_eq!(anth_msgs[2]["content"][0]["tool_use_id"], tool_call_id);
+
+    // Google Gemini
+    let g_body = google::build_request_body(&ctx, &options);
+    let g_contents = g_body["contents"].as_array().unwrap();
+    assert_eq!(g_contents.len(), 3);
+    assert_eq!(g_contents[1]["role"], "model");
+    assert_eq!(
+        g_contents[1]["parts"][1]["functionCall"]["name"],
+        "read_file"
+    );
+    assert_eq!(g_contents[2]["role"], "user");
+    assert_eq!(
+        g_contents[2]["parts"][0]["functionResponse"]["name"],
+        "read_file"
+    );
+
+    // OpenAI Chat
+    let oa_model = Model::openai_compat(
+        "openai",
+        "gpt-4o",
+        "https://api.openai.com/v1",
+        128000,
+        4096,
+    );
+    let oa_body = openai::build_request_body(&oa_model, &ctx, &options);
+    let oa_msgs = oa_body["messages"].as_array().unwrap();
+    // System + 3 messages = 4
+    assert_eq!(oa_msgs.len(), 4);
+    assert_eq!(oa_msgs[0]["role"], "system");
+    assert_eq!(oa_msgs[2]["role"], "assistant");
+    assert_eq!(oa_msgs[2]["tool_calls"][0]["id"], tool_call_id);
+    assert_eq!(oa_msgs[3]["role"], "tool");
+    assert_eq!(oa_msgs[3]["tool_call_id"], tool_call_id);
+
+    // OpenAI Responses
+    let oar_body = openai_responses::build_request_body(&oa_model, &ctx, &options);
+    let oar_input = oar_body["input"].as_array().unwrap();
+    // User message, Assistant text message, Assistant function_call item, Tool result item = 4
+    assert_eq!(oar_input.len(), 4);
+    assert_eq!(oar_input[2]["type"], "function_call");
+    assert_eq!(oar_input[2]["call_id"], tool_call_id);
+    assert_eq!(oar_input[3]["type"], "function_call_output");
+    assert_eq!(oar_input[3]["call_id"], tool_call_id);
+}

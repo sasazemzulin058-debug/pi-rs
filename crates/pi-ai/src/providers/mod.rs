@@ -46,14 +46,36 @@ impl ProviderFactory for DefaultProviderFactory {
     }
 }
 
-/// Fake provider factory that replays a fixed sequence of events on stream().
+/// Fake provider factory that replays a fixed sequence of event streams on consecutive stream() calls.
 pub struct FakeProviderFactory {
-    events: Vec<crate::types::AssistantMessageEvent>,
+    streams: std::sync::Mutex<Vec<Vec<Result<crate::types::AssistantMessageEvent>>>>,
 }
 
 impl FakeProviderFactory {
     pub fn new(events: Vec<crate::types::AssistantMessageEvent>) -> Self {
-        Self { events }
+        Self {
+            streams: std::sync::Mutex::new(vec![events.into_iter().map(Ok).collect()]),
+        }
+    }
+
+    pub fn new_sequence(streams: Vec<Vec<Result<crate::types::AssistantMessageEvent>>>) -> Self {
+        Self {
+            streams: std::sync::Mutex::new(streams),
+        }
+    }
+}
+
+fn clone_event_result(
+    res: &Result<crate::types::AssistantMessageEvent>,
+) -> Result<crate::types::AssistantMessageEvent> {
+    match res {
+        Ok(ev) => Ok(ev.clone()),
+        Err(crate::Error::ProviderError { status, body }) => Err(crate::Error::ProviderError {
+            status: *status,
+            body: body.clone(),
+        }),
+        Err(crate::Error::Other(msg)) => Err(crate::Error::Other(msg.clone())),
+        Err(e) => Err(crate::Error::Other(e.to_string())),
     }
 }
 
@@ -65,7 +87,16 @@ impl ProviderFactory for FakeProviderFactory {
         _context: &Context,
         options: &StreamOptions,
     ) -> Result<AssistantMessageEventStream> {
-        let events = self.events.clone();
+        let events = {
+            let mut guard = self.streams.lock().unwrap();
+            if guard.is_empty() {
+                Vec::new()
+            } else if guard.len() == 1 {
+                guard[0].iter().map(clone_event_result).collect()
+            } else {
+                guard.remove(0)
+            }
+        };
         let cancel = options.cancel.clone();
         let s = async_stream::stream! {
             for event in events {
@@ -75,7 +106,7 @@ impl ProviderFactory for FakeProviderFactory {
                         return;
                     }
                 }
-                yield Ok(event);
+                yield event;
             }
         };
         Ok(Box::pin(s))
