@@ -31,7 +31,6 @@ def _repair_gaxios_metadata(upstream_root: str) -> None:
 
 def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
     """Capture case cli.print.basic using upstream Pi CLI print mode."""
-    _repair_gaxios_metadata(upstream_root)
     cmd = ["node", "--import", "tsx/esm", "packages/coding-agent/src/cli.ts", "--print", "hello"]
     res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
     if res.returncode != 0:
@@ -45,7 +44,6 @@ def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
 
 def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
     """Capture case agent.serial-tool-loop using scripted provider or print mode with tool calls."""
-    _repair_gaxios_metadata(upstream_root)
     # Run upstream CLI in print mode with scripted prompt requiring sequential tool calls
     cmd = ["node", "--import", "tsx/esm", "packages/coding-agent/src/cli.ts", "--print", "read file test.txt"]
     res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
