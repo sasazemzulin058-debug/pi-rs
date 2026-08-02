@@ -17,7 +17,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24.18.0'
+          node-version: '22.14.0'
 
       - name: Clone upstream Pi
         run: |
@@ -52,13 +52,6 @@ jobs:
           console.log("validated gaxios package with tsx");
           NODE
           sha256sum node_modules/gaxios/package.json
-
-      - name: Diagnose gaxios before capture
-        run: |
-          sha256sum upstream-pi-mono/node_modules/gaxios/package.json
-          sha256sum /tmp/gaxios-repair/package/package.json
-          head -c 40 upstream-pi-mono/node_modules/gaxios/package.json
-          printf '\n'
 
       - name: Run reference capture
         env:
