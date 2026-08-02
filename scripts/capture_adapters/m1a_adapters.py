@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -38,7 +39,8 @@ def capture_cli_print_basic(upstream_root: str) -> dict[str, Any]:
         "--print",
         "hello",
     ]
-    res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
+    bash_cmd = f"cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json && exec {shlex.join(cmd)}"
+    res = subprocess.run(["bash", "-c", bash_cmd], cwd=upstream_root, capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError(
             f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"
@@ -59,7 +61,8 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> dict[str, Any]:
         "--print",
         "read file test.txt",
     ]
-    res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
+    bash_cmd = f"cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json && exec {shlex.join(cmd)}"
+    res = subprocess.run(["bash", "-c", bash_cmd], cwd=upstream_root, capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError(
             f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}"
