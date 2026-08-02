@@ -136,9 +136,60 @@ def capture_tool_bash_cancel_descendants(upstream_root: str) -> dict[str, Any]:
 
 
 def capture_resource_context_precedence(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError(
-        "real upstream capture required: resource.context-precedence"
-    )
+    """Capture case resource.context-precedence using DefaultResourceLoader / loadProjectContextFiles."""
+    resource_loader_path = (
+        Path(upstream_root)
+        / "packages/coding-agent/src/core/resource-loader.ts"
+    ).resolve()
+    with tempfile.TemporaryDirectory(
+        prefix="capture-context-", dir=upstream_root
+    ) as temp_dir:
+        agent_dir = Path(temp_dir) / "global_agent"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "AGENTS.md").write_text("global context", encoding="utf-8")
+
+        parent_dir = Path(temp_dir) / "parent"
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        (parent_dir / "AGENTS.md").write_text("parent context", encoding="utf-8")
+
+        child_dir = parent_dir / "child"
+        child_dir.mkdir(parents=True, exist_ok=True)
+        (child_dir / "AGENTS.md").write_text("child context", encoding="utf-8")
+
+        script_path = Path(temp_dir) / "capture-context.ts"
+        script_path.write_text(
+            f"""import {{ loadProjectContextFiles }} from {json.dumps(str(resource_loader_path))};
+
+const cwd = {json.dumps(str(child_dir))};
+const agentDir = {json.dumps(str(agent_dir))};
+
+const files = loadProjectContextFiles({{ cwd, agentDir }});
+console.log(JSON.stringify(files));
+""",
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            [
+                "node",
+                "--import",
+                "tsx/esm",
+                str(script_path),
+            ],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"upstream resource.context-precedence execution failed ({res.returncode}): {res.stderr.strip()}"
+            )
+        try:
+            return normalize_structure(json.loads(res.stdout.strip()))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"upstream resource.context-precedence returned invalid JSON: {res.stdout!r}"
+            ) from exc
+
 
 
 def capture_resource_untrusted_project(upstream_root: str) -> dict[str, Any]:
