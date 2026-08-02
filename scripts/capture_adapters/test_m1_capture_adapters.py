@@ -182,7 +182,11 @@ class CaptureAdapterContracts(unittest.TestCase):
             {
                 "events": [
                     {"type": "session_start", "id": "session-random"},
-                    {"type": "message_start", "id": "entry-random", "parentId": "session-random"},
+                    {
+                        "type": "message_start",
+                        "id": "entry-random",
+                        "parentId": "session-random",
+                    },
                     {"type": "message_end", "id": "entry-random"},
                 ]
             },
