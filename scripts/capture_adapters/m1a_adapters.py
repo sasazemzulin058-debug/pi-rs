@@ -282,7 +282,9 @@ console.log(JSON.stringify({{ success, error_case }}));
                 f"upstream tool.read.bounds execution failed ({res.returncode}): {res.stderr.strip()}"
             )
         try:
-            return normalize_structure(json.loads(res.stdout.strip()))
+            return cast(
+                dict[str, Any], normalize_structure(json.loads(res.stdout.strip()))
+            )
         except json.JSONDecodeError as exc:
             raise RuntimeError(
                 f"upstream tool.read.bounds returned invalid JSON: {res.stdout!r}"
@@ -436,19 +438,52 @@ def capture_resource_untrusted_project(upstream_root: str) -> dict[str, Any]:
     project_trust_path = (
         Path(upstream_root) / "packages/coding-agent/src/core/project-trust.ts"
     ).resolve()
+    trust_manager_path = (
+        Path(upstream_root) / "packages/coding-agent/src/core/trust-manager.ts"
+    ).resolve()
     with tempfile.TemporaryDirectory(
         prefix="capture-trust-", dir=upstream_root
     ) as temp_dir:
+        agent_dir = Path(temp_dir) / "agent_dir"
+        untrusted_dir = Path(temp_dir) / "untrusted_proj"
+        untrusted_dir.mkdir(parents=True, exist_ok=True)
+        (untrusted_dir / ".pi").mkdir(parents=True, exist_ok=True)
+        (untrusted_dir / ".pi" / "settings.json").write_text("{}", encoding="utf-8")
+
         script_path = Path(temp_dir) / "capture-trust.ts"
         script_path.write_text(
-            f"""import {{ isProjectTrusted, setProjectTrust }} from {json.dumps(str(project_trust_path))};
+            f"""import {{ resolveProjectTrusted }} from {json.dumps(str(project_trust_path))};
+import {{ ProjectTrustStore, hasTrustRequiringProjectResources }} from {json.dumps(str(trust_manager_path))};
 
-const projectDir = {json.dumps(temp_dir)};
-const before = isProjectTrusted(projectDir);
-setProjectTrust(projectDir, true);
-const after = isProjectTrusted(projectDir);
+const agentDir = {json.dumps(str(agent_dir))};
+const untrustedDir = {json.dumps(str(untrusted_dir))};
 
-console.log(JSON.stringify({{ before, after }}));
+const trustStore = new ProjectTrustStore(agentDir);
+const hasResources = hasTrustRequiringProjectResources(untrustedDir);
+
+const initialDecision = trustStore.get(untrustedDir);
+const initialResolved = await resolveProjectTrusted({{
+  cwd: untrustedDir,
+  trustStore,
+  defaultProjectTrust: "never",
+  projectTrustContext: {{ hasUI: false, ui: {{ select: async () => undefined }} as any }},
+}});
+
+trustStore.set(untrustedDir, true);
+const updatedDecision = trustStore.get(untrustedDir);
+const updatedResolved = await resolveProjectTrusted({{
+  cwd: untrustedDir,
+  trustStore,
+  projectTrustContext: {{ hasUI: false, ui: {{ select: async () => undefined }} as any }},
+}});
+
+console.log(JSON.stringify({{
+  has_resources: hasResources,
+  initial_decision: initialDecision,
+  initial_resolved: initialResolved,
+  updated_decision: updatedDecision,
+  updated_resolved: updatedResolved,
+}}));
 """,
             encoding="utf-8",
         )
