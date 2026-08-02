@@ -104,13 +104,19 @@ jobs:
           export LLVM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           export LLVM="$LLVM/bin"
           linker="$LLVM/aarch64-linux-android21-clang"
+          test -x "$linker"
+          test -x "$LLVM/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$linker"
           export CC_aarch64_linux_android="$linker"
           export AR_aarch64_linux_android="$LLVM/llvm-ar"
           cargo build --package pi-coding-agent --release \
             --target aarch64-linux-android
+          mkdir -p dist
+          cp target/aarch64-linux-android/release/pi-rs \
+            dist/pi-rs-aarch64-linux-android
+          test -x dist/pi-rs-aarch64-linux-android
       - name: Upload Termux aarch64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: pi-rs-aarch64-linux-android
-          path: target/aarch64-linux-android/release/pi-rs
+          path: dist/pi-rs-aarch64-linux-android
