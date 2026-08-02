@@ -91,6 +91,17 @@ class CaptureAdapterContracts(unittest.TestCase):
             )
             self.assertIn("modelsPath: null", source)
             self.assertIn("allowModelNetwork: false", source)
+            registration = "modelRuntime.registerProvider(model.provider, {\nbaseUrl: model.baseUrl,\napi: model.api,\n});"
+            self.assertIn(registration, source)
+            create_runtime = source.index(
+                "const modelRuntime = await ModelRuntime.create"
+            )
+            registration_start = source.index(registration)
+            make_start = source.index("const make =")
+            self.assertLess(create_runtime, registration_start)
+            self.assertLess(registration_start, make_start)
+            self.assertNotIn("models:", source)
+            self.assertNotIn("modelRuntime.getModel(", source)
             self.assertIn("modelRuntime });", source)
             return type(
                 "Completed",

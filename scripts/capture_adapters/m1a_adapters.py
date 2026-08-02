@@ -124,6 +124,10 @@ const modelRuntime = await ModelRuntime.create({
   modelsPath: null,
   allowModelNetwork: false,
 });
+modelRuntime.registerProvider(model.provider, {
+baseUrl: model.baseUrl,
+api: model.api,
+});
 const make = async ({ sessionManager, sessionStartEvent, cwd }: any) => {
   const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
   const result = await createAgentSessionFromServices({ services, sessionManager, model, sessionStartEvent });
