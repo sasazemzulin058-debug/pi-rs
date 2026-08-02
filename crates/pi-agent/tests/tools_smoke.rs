@@ -186,11 +186,12 @@ async fn bash_timeout_kills_descendants() {
     let started = dir.join("started");
     let done = dir.join("done");
 
+    std::fs::write(&started, "").unwrap();
+
     let tool = bash::BashTool::new();
-    let started_str = started.to_string_lossy();
     let done_str = done.to_string_lossy();
 
-    let cmd = format!("touch \"{started_str}\"; ( sleep 10; touch \"{done_str}\" ) & wait");
+    let cmd = format!("(sleep 10; touch \"{done_str}\") & wait");
 
     let res = tool
         .execute(
