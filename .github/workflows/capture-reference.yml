@@ -17,7 +17,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.19.1'
+          node-version: '24.18.0'
 
       - name: Clone upstream Pi
         run: |
@@ -41,16 +41,22 @@ jobs:
           tar -xzf /tmp/gaxios-repair/gaxios-7.1.4.tgz -C /tmp/gaxios-repair
           cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json
           node -e "JSON.parse(require('fs').readFileSync('node_modules/gaxios/package.json', 'utf8')); console.log('validated node_modules/gaxios/package.json')"
-          npm run hydrate-model-data --workspace=@earendil-works/pi-ai
+          node --import tsx/esm packages/ai/scripts/generate-models.ts \
+            --strict --data-only
           rm -rf node_modules/gaxios
           cp -R /tmp/gaxios-repair/package node_modules/gaxios
-          node -e "JSON.parse(require('fs').readFileSync('node_modules/gaxios/package.json', 'utf8')); console.log('validated gaxios package after hydration')"
-          node --import tsx/esm <<'NODE'
-          const fs = require("fs");
-          const text = fs.readFileSync("node_modules/gaxios/package.json", "utf8");
-          JSON.parse(text);
-          console.log("validated gaxios package with tsx");
-          NODE
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const raw = fs.readFileSync(
+              "node_modules/gaxios/package.json", "utf8");
+            JSON.parse(raw);
+          '
+          node --import tsx/esm --input-type=module -e '
+            import fs from "node:fs";
+            const raw = fs.readFileSync(
+              "node_modules/gaxios/package.json", "utf8");
+            JSON.parse(raw);
+          '
           sha256sum node_modules/gaxios/package.json
 
       - name: Run reference capture
