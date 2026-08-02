@@ -45,6 +45,77 @@ async fn write_then_read_roundtrips() {
 }
 
 #[tokio::test]
+async fn write_atomic_overwrite_leaves_no_temp_residue() {
+    let dir = scratch_dir();
+    let path = dir.join("replace.txt");
+    std::fs::write(&path, "original").unwrap();
+
+    write::WriteTool
+        .execute("1", json!({"path": path, "content": "replaced"}))
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "replaced");
+    let residue = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .any(|name| name.to_string_lossy().contains(".tmp."));
+    assert!(!residue, "temporary write file was left behind");
+}
+
+#[tokio::test]
+async fn write_creates_nested_parents() {
+    let dir = scratch_dir();
+    let path = dir.join("a/b/c/nested.txt");
+
+    write::WriteTool
+        .execute("1", json!({"path": path, "content": "nested"}))
+        .await
+        .unwrap();
+
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "nested");
+}
+
+#[tokio::test]
+async fn write_failure_preserves_existing_path() {
+    let dir = scratch_dir();
+    let parent_file = dir.join("not-a-directory");
+    std::fs::write(&parent_file, "original").unwrap();
+    let path = parent_file.join("target.txt");
+
+    let result = write::WriteTool
+        .execute("1", json!({"path": path, "content": "replacement"}))
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_to_string(&parent_file).unwrap(), "original");
+    let residue = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .any(|name| name.to_string_lossy().contains(".tmp."));
+    assert!(
+        !residue,
+        "temporary write file was left behind after failure"
+    );
+
+    let target_dir = dir.join("target-dir");
+    std::fs::create_dir(&target_dir).unwrap();
+    let result = write::WriteTool
+        .execute("2", json!({"path": target_dir, "content": "replacement"}))
+        .await;
+    assert!(result.is_err());
+    assert!(target_dir.is_dir());
+    let residue = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .any(|name| name.to_string_lossy().contains(".tmp."));
+    assert!(
+        !residue,
+        "temporary write file was left behind after rename failure"
+    );
+}
+
+#[tokio::test]
 async fn edit_replaces_single_occurrence() {
     let dir = scratch_dir();
     let path = dir.join("a.txt");
