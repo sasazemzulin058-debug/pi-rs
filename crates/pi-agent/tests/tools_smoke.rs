@@ -190,7 +190,7 @@ async fn bash_timeout_kills_descendants() {
 
     let tool = bash::BashTool::new();
     let cmd = format!(
-        "sh -c 'echo $$ > {}; exec sleep 2' & ( sleep 2; touch {} ) & wait",
+        "echo $$ > {}; ( sleep 2; touch {} ) & wait",
         pidfile.display(),
         marker.display()
     );
