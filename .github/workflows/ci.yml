@@ -98,10 +98,9 @@ jobs:
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/25.2.9519653"
           export LLVM="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
           export LLVM="$LLVM/bin"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=\
-            "$LLVM/aarch64-linux-android21-clang"
-          export CC_aarch64_linux_android=\
-            "$LLVM/aarch64-linux-android21-clang"
+          linker="$LLVM/aarch64-linux-android21-clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$linker"
+          export CC_aarch64_linux_android="$linker"
           export AR_aarch64_linux_android="$LLVM/llvm-ar"
           cargo build --package pi-coding-agent --release \
             --target aarch64-linux-android
