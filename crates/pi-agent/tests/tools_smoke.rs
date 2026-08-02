@@ -218,8 +218,7 @@ async fn bash_timeout_kills_descendants() {
         elapsed.as_millis()
     );
 
-    let pid_str = std::fs::read_to_string(&pidfile)
-        .expect("pidfile must be created and readable");
+    let pid_str = std::fs::read_to_string(&pidfile).expect("pidfile must be created and readable");
     let pid: i32 = pid_str
         .trim()
         .parse()
