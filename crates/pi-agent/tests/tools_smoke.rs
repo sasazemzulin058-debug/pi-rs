@@ -189,10 +189,10 @@ async fn bash_timeout_kills_descendants() {
     let marker = dir.join("child.done");
 
     let tool = bash::BashTool::new();
+    let pidfile_str = pidfile.to_string_lossy();
+    let marker_str = marker.to_string_lossy();
     let cmd = format!(
-        "echo $$ > {}; ( sleep 2; touch {} ) & wait",
-        pidfile.display(),
-        marker.display()
+        "printf '%s\\n' \"$$\" > \"{pidfile_str}\"; ( sleep 2; touch \"{marker_str}\" ) & wait"
     );
 
     let start = Instant::now();
@@ -216,10 +216,17 @@ async fn bash_timeout_kills_descendants() {
         elapsed.as_millis()
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let mut pid_str = String::new();
+    for _ in 0..50 {
+        if let Ok(content) = std::fs::read_to_string(&pidfile) {
+            if !content.trim().is_empty() {
+                pid_str = content;
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 
-    let pid_str = std::fs::read_to_string(&pidfile)
-        .expect("pidfile must be created and readable");
     let pid: i32 = pid_str
         .trim()
         .parse()
