@@ -7,6 +7,10 @@ on:
         description: "Milestone to capture (e.g. M1a)"
         required: true
         default: "M1a"
+      case:
+        description: "Optional exact case selector"
+        required: false
+        default: ""
 
 jobs:
   capture:
@@ -65,9 +69,41 @@ jobs:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PI_MODEL: gemini-3-flash-preview
+          CAPTURE_MILESTONE: ${{ github.event.inputs.milestone }}
+          CAPTURE_CASE: ${{ github.event.inputs.case }}
         run: |
-          milestone="${{ github.event.inputs.milestone }}"
-          python3 scripts/capture-upstream-fixtures --milestone "$milestone"
+          args=(--milestone "$CAPTURE_MILESTONE")
+          if [ -n "$CAPTURE_CASE" ]; then args+=(--case "$CAPTURE_CASE"); fi
+          python3 scripts/capture-upstream-fixtures "${args[@]}"
+          if [ -n "$CAPTURE_CASE" ]; then
+            python3 scripts/validate-fixture-manifest
+            python3 - "$CAPTURE_CASE" <<'PY'
+          import json
+          import sys
+          case = sys.argv[1]
+          with open("fixtures/upstream-pi/manifest.json", encoding="utf-8") as stream:
+              manifest = json.load(stream)
+          assert manifest["cases"][case]["captured"] is True
+          assert manifest["captureEnvironment"]["captureScope"]["caseIds"] == [case]
+          PY
+          else
+            python3 scripts/validate-fixture-manifest --milestone "$CAPTURE_MILESTONE"
+          fi
+
+      - name: Repeat selected capture and compare
+        if: ${{ github.event.inputs.case != '' }}
+        env:
+          PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PI_MODEL: gemini-3-flash-preview
+          CAPTURE_MILESTONE: ${{ github.event.inputs.milestone }}
+          CAPTURE_CASE: ${{ github.event.inputs.case }}
+        run: |
+          cp "fixtures/upstream-pi/${CAPTURE_CASE}.expected.json" /tmp/expected.json
+          cp "fixtures/upstream-pi/${CAPTURE_CASE}.raw-hash.txt" /tmp/raw-hash.txt
+          python3 scripts/capture-upstream-fixtures --milestone "$CAPTURE_MILESTONE" --case "$CAPTURE_CASE"
+          cmp /tmp/expected.json "fixtures/upstream-pi/${CAPTURE_CASE}.expected.json"
+          cmp /tmp/raw-hash.txt "fixtures/upstream-pi/${CAPTURE_CASE}.raw-hash.txt"
 
       - name: Archive captured fixtures
         uses: actions/upload-artifact@v4
