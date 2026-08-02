@@ -35,6 +35,10 @@ def capture_cli_print_basic(upstream_root: str) -> dict[str, Any]:
         "node",
         "packages/coding-agent/dist/cli.js",
         "--print",
+        "--provider",
+        "google",
+        "--model",
+        "gemini-3-flash-preview",
         "hello",
     ]
     bash_cmd = f"cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json && exec {shlex.join(cmd)}"
@@ -57,6 +61,10 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> dict[str, Any]:
         "node",
         "packages/coding-agent/dist/cli.js",
         "--print",
+        "--provider",
+        "google",
+        "--model",
+        "gemini-3-flash-preview",
         "read file test.txt",
     ]
     bash_cmd = f"cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json && exec {shlex.join(cmd)}"
