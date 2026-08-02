@@ -48,13 +48,6 @@ jobs:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          cd upstream-pi-mono
-          mkdir -p /tmp/gaxios-repair
-          npm pack gaxios@7.1.4 --pack-destination /tmp/gaxios-repair >/dev/null
-          tar -xzf /tmp/gaxios-repair/gaxios-7.1.4.tgz -C /tmp/gaxios-repair
-          cp /tmp/gaxios-repair/package/package.json node_modules/gaxios/package.json
-          node -e "JSON.parse(require('fs').readFileSync('node_modules/gaxios/package.json', 'utf8')); console.log('validated runtime gaxios metadata')"
-          cd ..
           python3 scripts/capture-upstream-fixtures --milestone "${{ github.event.inputs.milestone }}"
           
       - name: Archive captured fixtures

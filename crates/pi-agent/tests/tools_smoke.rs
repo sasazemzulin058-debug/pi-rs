@@ -217,12 +217,16 @@ async fn bash_timeout_kills_descendants() {
     );
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    if let Ok(pid_str) = std::fs::read_to_string(&pidfile) {
-        if let Ok(pid) = pid_str.trim().parse::<i32>() {
-            let is_alive = unsafe { libc::kill(pid, 0) == 0 };
-            assert!(!is_alive, "descendant process {pid} was not killed");
-        }
-    }
+
+    let pid_str = std::fs::read_to_string(&pidfile)
+        .expect("pidfile must be created and readable");
+    let pid: i32 = pid_str
+        .trim()
+        .parse()
+        .expect("pidfile must contain valid integer pid");
+
+    let is_alive = unsafe { libc::kill(pid, 0) == 0 };
+    assert!(!is_alive, "descendant process {pid} was not killed");
 
     assert!(!marker.exists(), "marker file should not exist");
 }
