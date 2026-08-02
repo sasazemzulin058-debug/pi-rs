@@ -51,6 +51,7 @@ pub fn default_model_from_env() -> Model {
             }
             "gpt-4o" => return Model::openai_gpt_4o(),
             "gpt-4o-mini" => return Model::openai_gpt_4o_mini(),
+            "gemini-2.0-flash" => return Model::gemini_2_0_flash(),
             _ => {}
         }
     }
