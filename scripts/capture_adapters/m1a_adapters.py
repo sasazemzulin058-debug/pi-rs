@@ -87,6 +87,12 @@ def _normalize_capture(value: Any, disposable_root: str, upstream_root: str) -> 
                         counters[kind] += 1
                         ids[val] = f"{kind}-{counters[kind]}"
                     result[key] = ids[val]
+                elif key in {"id", "parentId", "parent_id"} and isinstance(val, str):
+                    ids = ids_by_kind["entry"]
+                    if val not in ids:
+                        counters["entry"] += 1
+                        ids[val] = f"entry-{counters['entry']}"
+                    result[key] = ids[val]
                 else:
                     result[key] = walk(val)
             return result

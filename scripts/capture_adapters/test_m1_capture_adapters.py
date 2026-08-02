@@ -177,6 +177,28 @@ class CaptureAdapterContracts(unittest.TestCase):
         )
         self.assertEqual(normalized, {"sessionId": "session-1", "entryId": "entry-1"})
 
+    def test_normalization_stabilizes_session_entry_ids_and_order(self):
+        normalized = _normalize_capture(
+            {
+                "events": [
+                    {"type": "session_start", "id": "session-random"},
+                    {"type": "message_start", "id": "entry-random", "parentId": "session-random"},
+                    {"type": "message_end", "id": "entry-random"},
+                ]
+            },
+            "/tmp/case",
+            "/opt/upstream",
+        )
+        self.assertEqual(
+            [event["type"] for event in normalized["events"]],
+            ["session_start", "message_start", "message_end"],
+        )
+        self.assertEqual(
+            [event["id"] for event in normalized["events"]],
+            ["entry-1", "entry-2", "entry-2"],
+        )
+        self.assertEqual(normalized["events"][1]["parentId"], "entry-1")
+
 
 if __name__ == "__main__":
     unittest.main()
