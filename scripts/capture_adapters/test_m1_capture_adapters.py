@@ -1,5 +1,11 @@
+import ast
+import inspect
+import textwrap
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
+import m1a_adapters
 from m1a_adapters import (
     ADAPTERS,
     _normalize_capture,
@@ -32,6 +38,88 @@ class CaptureAdapterContracts(unittest.TestCase):
             "agent.retry-auto-compaction": capture_agent_retry_auto_compaction,
         }
         self.assertEqual(ADAPTERS, expected)
+
+    def test_cli_json_runner_uses_disposable_agent_dir(self):
+        source = textwrap.dedent(inspect.getsource(capture_cli_json_events))
+        tree = ast.parse(source)
+        self.assertIn(
+            'with tempfile.TemporaryDirectory(prefix="pi-json-capture-") as temp:',
+            source,
+        )
+        self.assertIn('agent_dir = temp_root / "agent-dir"', source)
+        self.assertIn("agent_dir.mkdir()", source)
+        self.assertIn('"__AGENT_DIR__", json.dumps(str(agent_dir))', source)
+        self.assertIn("cwd=upstream_root", source)
+        self.assertNotIn(".capture-agent", source)
+
+        calls = [
+            ast.unparse(node) for node in ast.walk(tree) if isinstance(node, ast.Call)
+        ]
+        self.assertTrue(any(call.startswith("agent_dir.mkdir") for call in calls))
+        self.assertTrue(any("json.dumps(str(agent_dir))" in call for call in calls))
+        self.assertTrue(any(call.startswith("path.write_text") for call in calls))
+        self.assertTrue(any(call.startswith("subprocess.run") for call in calls))
+        make_start = source.index("const make =")
+        stream_patch = source.index("result.session.agent.streamFunction", make_start)
+        return_result = source.index("return result", stream_patch)
+        self.assertLess(make_start, stream_patch)
+        self.assertLess(stream_patch, return_result)
+
+    def test_cli_json_runner_subprocess_contract_and_cleanup(self):
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            runner_path = Path(command[-1])
+            seen.update(
+                command=command,
+                kwargs=kwargs,
+                runner=runner_path,
+                agent_dir=runner_path.parent / "agent-dir",
+            )
+            source = runner_path.read_text(encoding="utf-8")
+            self.assertIn(
+                'from "/opt/pinned-upstream/node_modules/@earendil-works/pi-ai/dist/index.js"',
+                source,
+            )
+            self.assertNotIn(
+                'from "@earendil-works/pi-ai"',
+                source,
+            )
+            self.assertIn(
+                'AuthStorage.inMemory({ capture: { type: "api_key", key: "capture-key" } })',
+                source,
+            )
+            self.assertIn("modelsPath: null", source)
+            self.assertIn("allowModelNetwork: false", source)
+            self.assertIn("modelRuntime });", source)
+            return type(
+                "Completed",
+                (),
+                {
+                    "stdout": '{"type":"start"}\n{"type":"done"}\n',
+                    "stderr": "",
+                    "returncode": 0,
+                },
+            )()
+
+        with (
+            patch.object(
+                m1a_adapters, "_get_tsx_import_arg", return_value="fake-loader.mjs"
+            ),
+            patch.object(m1a_adapters.subprocess, "run", side_effect=fake_run),
+        ):
+            result = capture_cli_json_events("/opt/pinned-upstream")
+
+        self.assertEqual(
+            result, {"exit_code": 0, "events": [{"type": "start"}, {"type": "done"}]}
+        )
+        self.assertEqual(seen["command"][:3], ["node", "--import", "fake-loader.mjs"])
+        self.assertEqual(
+            seen["kwargs"],
+            {"cwd": "/opt/pinned-upstream", "capture_output": True, "text": True},
+        )
+        self.assertFalse(seen["runner"].exists())
+        self.assertFalse(seen["agent_dir"].exists())
 
     def test_strict_jsonl(self):
         self.assertEqual(

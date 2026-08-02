@@ -32,7 +32,7 @@ def _parse_strict_jsonl(
 ) -> list[dict[str, Any]]:
     """Parse a runner protocol without hiding diagnostics or malformed lines."""
     if returncode != 0:
-        raise RuntimeError(f"runner exited with status {returncode}")
+        raise RuntimeError(f"runner exited with status {returncode}; stderr={stderr!r}")
     if stderr:
         raise RuntimeError(f"runner wrote stderr: {stderr!r}")
     if not stdout.strip():
@@ -103,7 +103,62 @@ def _unsupported_capture(case: str, upstream_root: str) -> dict[str, Any]:
 
 
 def capture_cli_json_events(upstream_root: str) -> dict[str, Any]:
-    return _unsupported_capture("cli.json-events", upstream_root)
+    """Capture JSONL from pinned upstream's production print-mode seam."""
+    loader = _get_tsx_import_arg(upstream_root)
+    if loader == "tsx/esm":
+        raise RuntimeError(
+            f"cli.json-events: pinned tsx loader not found under {upstream_root}"
+        )
+    runner = r"""import { createAssistantMessageEventStream } from "__UPSTREAM__/node_modules/@earendil-works/pi-ai/dist/index.js";
+import { AuthStorage } from "__UPSTREAM__/packages/coding-agent/src/core/auth-storage.ts";
+import { ModelRuntime } from "__UPSTREAM__/packages/coding-agent/src/core/model-runtime.ts";
+import { runPrintMode } from "__UPSTREAM__/packages/coding-agent/src/modes/print-mode.ts";
+import { createAgentSessionRuntime, createAgentSessionServices, createAgentSessionFromServices } from "__UPSTREAM__/packages/coding-agent/src/core/agent-session-runtime.ts";
+import { SessionManager } from "__UPSTREAM__/packages/coding-agent/src/core/session-manager.ts";
+const cwd = process.cwd();
+const agentDir = __AGENT_DIR__;
+const model = { id: "capture-model", name: "Capture Model", api: "anthropic-messages", provider: "capture", baseUrl: "http://127.0.0.1:1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 256 };
+const sessionManager = SessionManager.inMemory();
+const modelRuntime = await ModelRuntime.create({
+  credentials: AuthStorage.inMemory({ capture: { type: "api_key", key: "capture-key" } }),
+  modelsPath: null,
+  allowModelNetwork: false,
+});
+const make = async ({ sessionManager, sessionStartEvent, cwd }: any) => {
+  const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
+  const result = await createAgentSessionFromServices({ services, sessionManager, model, sessionStartEvent });
+  result.session.agent.streamFunction = () => { const stream = createAssistantMessageEventStream(); queueMicrotask(() => { const message = { role: "assistant", content: [{ type: "text", text: "fixed capture" }], api: model.api, provider: model.provider, model: model.id, usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: 0 }; stream.push({ type: "start", partial: { ...message, content: [], stopReason: "pending" } }); stream.push({ type: "text_start", contentIndex: 0, partial: { ...message, content: [{ type: "text", text: "" }], stopReason: "pending" } }); stream.push({ type: "text_delta", contentIndex: 0, delta: "fixed capture", partial: { ...message, content: [{ type: "text", text: "fixed capture" }], stopReason: "pending" } }); stream.push({ type: "text_end", contentIndex: 0, content: "fixed capture", partial: { ...message, content: [{ type: "text", text: "fixed capture" }], stopReason: "pending" } }); stream.push({ type: "done", reason: "stop", message }); }); return stream; };
+  return result;
+};
+const runtimeHost = await createAgentSessionRuntime(make, { cwd, agentDir, sessionManager });
+process.exitCode = await runPrintMode(runtimeHost, { mode: "json", initialMessage: "capture" });
+"""
+    with tempfile.TemporaryDirectory(prefix="pi-json-capture-") as temp:
+        temp_root = Path(temp).resolve()
+        agent_dir = temp_root / "agent-dir"
+        agent_dir.mkdir()
+        path = temp_root / "runner.mts"
+        path.write_text(
+            runner.replace("__UPSTREAM__", str(Path(upstream_root).resolve())).replace(
+                "__AGENT_DIR__", json.dumps(str(agent_dir))
+            ),
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            ["node", "--import", loader, str(path)],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+    records = _parse_strict_jsonl(res.stdout, res.stderr, res.returncode)
+    return cast(
+        dict[str, Any],
+        _normalize_capture(
+            {"exit_code": res.returncode, "events": records},
+            str(temp_root),
+            upstream_root,
+        ),
+    )
 
 
 def capture_agent_retry_auto_compaction(upstream_root: str) -> dict[str, Any]:
