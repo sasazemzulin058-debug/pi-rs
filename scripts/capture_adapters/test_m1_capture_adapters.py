@@ -152,6 +152,45 @@ class CaptureAdapterContracts(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
+    def test_search_runner_redirects_tools_and_cleans_up(self):
+        seen = {}
+        fake_tools = {"rg": "/opt/fake/rg", "fd": "/opt/fake/fd"}
+
+        def fake_run(command, **kwargs):
+            if command[0] == "node":
+                runner = Path(command[-1])
+                agent_dir = Path(kwargs["env"]["PI_CODING_AGENT_DIR"])
+                seen.update(
+                    root=runner.parent,
+                    env=kwargs["env"],
+                    rg=agent_dir / "bin/rg",
+                    fd=agent_dir / "bin/fd",
+                )
+                self.assertEqual(kwargs["cwd"], "/opt/pinned-upstream")
+                self.assertEqual(seen["rg"].resolve(), Path(fake_tools["rg"]))
+                self.assertEqual(seen["fd"].resolve(), Path(fake_tools["fd"]))
+                self.assertTrue(seen["rg"].is_symlink())
+                self.assertTrue(seen["fd"].is_symlink())
+                raise RuntimeError("stop after contract assertions")
+            self.assertEqual(command[0], "git")
+            return type(
+                "Completed", (), {"stdout": "", "stderr": "", "returncode": 0}
+            )()
+
+        with (
+            patch.object(m1a_adapters, "_get_tsx_import_arg", return_value="loader"),
+            patch.object(m1a_adapters.shutil, "which", side_effect=fake_tools.get),
+            patch.object(m1a_adapters.subprocess, "run", side_effect=fake_run),
+            self.assertRaisesRegex(RuntimeError, "stop after contract assertions"),
+        ):
+            capture_tool_grep_find_ls("/opt/pinned-upstream")
+
+        self.assertEqual(seen["env"]["PI_OFFLINE"], "1")
+        self.assertEqual(
+            seen["env"]["PI_CODING_AGENT_DIR"], str(seen["root"] / "agent-dir")
+        )
+        self.assertFalse(seen["root"].exists())
+
     def test_search_runner_uses_js_safe_digest_extraction(self):
         def fake_run(command, **kwargs):
             if command[0] == "node":
@@ -168,6 +207,11 @@ class CaptureAdapterContracts(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as upstream,
             patch.object(m1a_adapters, "_get_tsx_import_arg", return_value="loader"),
+            patch.object(
+                m1a_adapters.shutil,
+                "which",
+                side_effect={"rg": "/opt/fake/rg", "fd": "/opt/fake/fd"}.get,
+            ),
             patch.object(m1a_adapters.subprocess, "run", side_effect=fake_run),
             self.assertRaises(RuntimeError),
         ):

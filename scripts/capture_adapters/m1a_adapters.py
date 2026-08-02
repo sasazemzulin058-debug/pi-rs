@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -218,9 +219,8 @@ def capture_tool_grep_find_ls(upstream_root: str) -> dict[str, Any]:
         raise RuntimeError(
             f"tool.grep-find-ls: pinned tsx loader not found under {upstream_root}"
         )
-    with tempfile.TemporaryDirectory(
-        prefix="pi-search-capture-", dir=upstream_root
-    ) as temp:
+    # Keep all injected tools and capture fixtures outside the pinned checkout.
+    with tempfile.TemporaryDirectory(prefix="pi-search-capture-") as temp:
         root = Path(temp).resolve()
         agent_dir = root / "agent-dir"
         workspace = root / "workspace"
@@ -267,6 +267,24 @@ console.log(JSON.stringify(result));
             ),
             encoding="utf-8",
         )
+        # The pinned runtime's getBinDir() is getAgentDir()/bin.  Populate that
+        # disposable directory with real PATH binaries; never mutate the checkout.
+        tool_bin = agent_dir / "bin"
+        tool_bin.mkdir()
+        for name, candidates in (("rg", ("rg",)), ("fd", ("fd", "fdfind"))):
+            target = next(
+                (
+                    shutil.which(candidate)
+                    for candidate in candidates
+                    if shutil.which(candidate)
+                ),
+                None,
+            )
+            if target is None:
+                raise RuntimeError(
+                    f"tool.grep-find-ls: {name} executable not found on PATH"
+                )
+            (tool_bin / name).symlink_to(target)
         env = os.environ.copy()
         env.update({"PI_CODING_AGENT_DIR": str(agent_dir), "PI_OFFLINE": "1"})
         res = subprocess.run(
