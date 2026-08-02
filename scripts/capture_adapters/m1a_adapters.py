@@ -12,14 +12,30 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from contract_fixture_lib import normalize_structure
 
 
+def _get_tsx_import_arg(upstream_root: str) -> str:
+    """Resolve tsx loader path deterministically."""
+    candidate1 = Path(upstream_root) / "node_modules/tsx/dist/loader.mjs"
+    if candidate1.exists():
+        return str(candidate1.resolve())
+    candidate2 = Path(
+        "/data/data/com.termux/files/home/upstream-pi-inspect/node_modules/tsx/dist/loader.mjs"
+    )
+    if candidate2.exists():
+        return str(candidate2.resolve())
+    return "tsx/esm"
+
+
 def _repair_gaxios_metadata(upstream_root: str) -> None:
+    """Repair corrupted gaxios package.json metadata if needed."""
     source = Path("/tmp/gaxios-repair/package/package.json")
     target = Path(upstream_root) / "node_modules/gaxios/package.json"
-    if source.exists():
+    if source.exists() and target.parent.exists():
         target.write_bytes(source.read_bytes())
-        json.loads(target.read_text(encoding="utf-8"))
+        try:
+            json.loads(target.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
     elif target.exists():
-        # Validate that existing metadata is valid JSON
         try:
             json.loads(target.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -80,9 +96,149 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> dict[str, Any]:
 
 
 def capture_provider_openai_chat_fragmented_sse(upstream_root: str) -> dict[str, Any]:
-    raise NotImplementedError(
-        "real upstream capture required: provider.openai-chat.fragmented-sse"
-    )
+    """Capture case provider.openai-chat.fragmented-sse using disposable Node harness and streamOpenAICompletions."""
+    _repair_gaxios_metadata(upstream_root)
+    openai_completions_path = (
+        Path(upstream_root) / "packages/ai/src/api/openai-completions.ts"
+    ).resolve()
+    with tempfile.TemporaryDirectory(
+        prefix="capture-sse-", dir=upstream_root
+    ) as temp_dir:
+        script_path = Path(temp_dir) / "capture-sse.ts"
+        script_path.write_text(
+            f"""import http from "node:http";
+import type {{ AddressInfo }} from "node:net";
+import {{ stream as streamOpenAICompletions }} from {json.dumps(str(openai_completions_path))};
+
+const server = http.createServer((req, res) => {{
+  if (req.method !== "POST" || req.url !== "/chat/completions") {{
+    res.writeHead(404).end();
+    return;
+  }}
+  res.writeHead(200, {{
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  }});
+
+  const chunks = [
+    JSON.stringify({{
+      id: "chatcmpl-frag1",
+      object: "chat.completion.chunk",
+      created: 1700000000,
+      model: "gpt-4o",
+      choices: [{{ index: 0, delta: {{ role: "assistant", content: "Hello" }}, finish_reason: null }}],
+    }}),
+    JSON.stringify({{
+      id: "chatcmpl-frag1",
+      object: "chat.completion.chunk",
+      created: 1700000000,
+      model: "gpt-4o",
+      choices: [{{ index: 0, delta: {{ content: " world" }}, finish_reason: null }}],
+    }}),
+    JSON.stringify({{
+      id: "chatcmpl-frag1",
+      object: "chat.completion.chunk",
+      created: 1700000000,
+      model: "gpt-4o",
+      choices: [{{ index: 0, delta: {{}}, finish_reason: "stop" }}],
+      usage: {{ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }},
+    }}),
+  ];
+
+  res.write("data: " + chunks[0] + "\\n\\n");
+  setTimeout(() => {{
+    res.write("data: " + chunks[1] + "\\n\\n");
+    setTimeout(() => {{
+      res.write("data: " + chunks[2] + "\\n\\n");
+      res.write("data: [DONE]\\n\\n");
+      res.end();
+    }}, 20);
+  }}, 20);
+}});
+
+server.listen(0, "127.0.0.1", async () => {{
+  const {{ port }} = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${{port}}`;
+
+  const model = {{
+    id: "gpt-4o",
+    name: "GPT-4o",
+    api: "openai-completions",
+    provider: "openai",
+    baseUrl,
+    reasoning: false,
+    input: ["text"],
+    cost: {{ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }},
+    contextWindow: 128000,
+    maxTokens: 4096,
+    compat: {{
+      supportsStore: false,
+      supportsDeveloperRole: true,
+      supportsReasoningEffort: false,
+      supportsUsageInStreaming: true,
+      maxTokensField: "max_completion_tokens",
+      requiresToolResultName: false,
+      requiresAssistantAfterToolResult: false,
+      requiresThinkingAsText: false,
+      requiresReasoningContentOnAssistantMessages: false,
+      thinkingFormat: "openai",
+      openRouterRouting: {{}},
+      vercelGatewayRouting: {{}},
+      chatTemplateKwargs: {{}},
+      zaiToolStream: false,
+      supportsStrictMode: false,
+      supportsOpenAIGrammarTools: false,
+      sendSessionAffinityHeaders: false,
+      sessionAffinityFormat: "openai",
+      supportsLongCacheRetention: false,
+    }},
+  }};
+
+  const context = {{
+    messages: [{{ role: "user", content: "hi", timestamp: 1 }}],
+  }};
+
+  try {{
+    const stream = streamOpenAICompletions(model, context, {{ apiKey: "test-key" }});
+    const result = await stream.result();
+    console.log(JSON.stringify(result));
+    server.close();
+    process.exit(0);
+  }} catch (err) {{
+    console.error(err);
+    server.close();
+    process.exit(1);
+  }}
+}});
+""",
+            encoding="utf-8",
+        )
+        tsx_loader = _get_tsx_import_arg(upstream_root)
+        res = subprocess.run(
+            [
+                "node",
+                "--import",
+                tsx_loader,
+                str(script_path),
+            ],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"upstream provider.openai-chat.fragmented-sse failed ({res.returncode}): {res.stderr.strip()}"
+            )
+        try:
+            res_json = json.loads(res.stdout.strip())
+            if isinstance(res_json, dict) and "timestamp" in res_json:
+                res_json["timestamp"] = 0
+            return normalize_structure(res_json)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"upstream provider.openai-chat.fragmented-sse returned invalid JSON: {res.stdout!r}"
+            ) from exc
 
 
 def capture_tool_read_bounds(upstream_root: str) -> dict[str, Any]:
@@ -95,8 +251,11 @@ def capture_tool_read_bounds(upstream_root: str) -> dict[str, Any]:
         fixture_path = Path(temp_dir) / "fixture.txt"
         script_path = Path(temp_dir) / "capture-read.ts"
         fixture_path.write_text(fixture_content, encoding="utf-8")
+        read_tool_path = (
+            Path(upstream_root) / "packages/coding-agent/src/core/tools/read.ts"
+        ).resolve()
         script_path.write_text(
-            f"""import {{ createReadToolDefinition }} from "../packages/coding-agent/src/core/tools/read.ts";
+            f"""import {{ createReadToolDefinition }} from {json.dumps(str(read_tool_path))};
 
 const tool = createReadToolDefinition({json.dumps(temp_dir)});
 const path = {json.dumps(str(fixture_path))};
@@ -111,8 +270,9 @@ console.log(JSON.stringify({{ success, error_case }}));
 """,
             encoding="utf-8",
         )
+        tsx_loader = _get_tsx_import_arg(upstream_root)
         res = subprocess.run(
-            ["node", "--import", "tsx/esm", str(script_path)],
+            ["node", "--import", tsx_loader, str(script_path)],
             cwd=upstream_root,
             capture_output=True,
             text=True,
@@ -138,8 +298,7 @@ def capture_tool_bash_cancel_descendants(upstream_root: str) -> dict[str, Any]:
 def capture_resource_context_precedence(upstream_root: str) -> dict[str, Any]:
     """Capture case resource.context-precedence using DefaultResourceLoader / loadProjectContextFiles."""
     resource_loader_path = (
-        Path(upstream_root)
-        / "packages/coding-agent/src/core/resource-loader.ts"
+        Path(upstream_root) / "packages/coding-agent/src/core/resource-loader.ts"
     ).resolve()
     with tempfile.TemporaryDirectory(
         prefix="capture-context-", dir=upstream_root
@@ -168,11 +327,12 @@ console.log(JSON.stringify(files));
 """,
             encoding="utf-8",
         )
+        tsx_loader = _get_tsx_import_arg(upstream_root)
         res = subprocess.run(
             [
                 "node",
                 "--import",
-                "tsx/esm",
+                tsx_loader,
                 str(script_path),
             ],
             cwd=upstream_root,
@@ -189,7 +349,6 @@ console.log(JSON.stringify(files));
             raise RuntimeError(
                 f"upstream resource.context-precedence returned invalid JSON: {res.stdout!r}"
             ) from exc
-
 
 
 def capture_resource_untrusted_project(upstream_root: str) -> dict[str, Any]:
