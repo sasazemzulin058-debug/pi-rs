@@ -16,6 +16,7 @@ def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
 
 export default function (api: any) {
   const faux = registerFauxProvider({
+    api: "faux",
     provider: "faux",
     models: [{ id: "faux-1", name: "Faux Model" }],
   });
@@ -70,6 +71,7 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
 
 export default function (api: any) {
   const faux = registerFauxProvider({
+    api: "faux",
     provider: "faux",
     models: [{ id: "faux-1", name: "Faux Model" }],
   });
