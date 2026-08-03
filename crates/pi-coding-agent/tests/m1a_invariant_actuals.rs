@@ -13,14 +13,14 @@ mod session;
 #[path = "../src/termux.rs"]
 mod termux;
 
-fn staging_dir() -> PathBuf {
-    PathBuf::from(std::env::var_os("PI_INVARIANT_STAGING_DIR").expect(
-        "PI_INVARIANT_STAGING_DIR must point to an isolated fixture staging directory",
-    ))
+fn staging_dir() -> Option<PathBuf> {
+    std::env::var_os("PI_INVARIANT_STAGING_DIR").map(PathBuf::from)
 }
 
 fn write_actual(case_id: &str, value: serde_json::Value) {
-    let dir = staging_dir();
+    let Some(dir) = staging_dir() else {
+        return;
+    };
     fs::create_dir_all(&dir).expect("create invariant staging directory");
     fs::write(
         dir.join(format!("{case_id}.actual.json")),

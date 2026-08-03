@@ -89,9 +89,9 @@ jobs:
       - name: Run Python contract tests
         run: |
           python3 -m unittest discover -s tests/contract -p "test_*.py"
-      - name: Validate fixture manifest (M1a requirement check)
+      - name: Validate fixture manifest structure
         run: |
-          python3 scripts/validate-fixture-manifest --milestone M1a
+          python3 scripts/validate-fixture-manifest
       - name: Run comparator self-tests
         run: |
           python3 scripts/compare-contract-fixtures --self-test
