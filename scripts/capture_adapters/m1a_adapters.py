@@ -26,7 +26,7 @@ export default function (api: any) {
   api.registerModel("faux", faux.getModel("faux-1"));
 }
 """
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
         ext_path = str(Path(tmp_dir) / "extension.ts")
         with open(ext_path, "w", encoding="utf-8") as f:
             f.write(extension_code)
@@ -71,7 +71,7 @@ export default function (api: any) {
   api.registerModel("faux", faux.getModel("faux-1"));
 }
 """
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
         test_file = Path(tmp_dir) / "test.txt"
         test_file.write_text("hello world", encoding="utf-8")
         ext_path = str(Path(tmp_dir) / "extension.ts")
