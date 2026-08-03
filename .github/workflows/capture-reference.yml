@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       milestone:
-        description: 'Milestone to capture (e.g. M1a)'
+        description: "Milestone to capture (e.g. M1a)"
         required: true
-        default: 'M1a'
+        default: "M1a"
 
 jobs:
   capture:
@@ -22,7 +22,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24.18.0'
+          node-version: "24.18.0"
 
       - name: Clone upstream Pi
         run: |
@@ -43,6 +43,7 @@ jobs:
           cd upstream-pi-mono
           npm ci
           npm run hydrate-model-data --workspace=@earendil-works/pi-ai
+          npm run build:offline --workspace=@earendil-works/pi-ai
 
       - name: Verify generated model data
         run: |
