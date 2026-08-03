@@ -24,6 +24,7 @@ export default function (api: any) {
   ]);
   api.registerProvider("faux", {
     name: "Faux Provider",
+    baseUrl: "http://127.0.0.1:9",
     api: faux.api,
     apiKey: "faux-test-key",
     models: [{
@@ -81,6 +82,7 @@ export default function (api: any) {
   ]);
   api.registerProvider("faux", {
     name: "Faux Provider",
+    baseUrl: "http://127.0.0.1:9",
     api: faux.api,
     apiKey: "faux-test-key",
     models: [{
