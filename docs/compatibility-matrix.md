@@ -17,15 +17,16 @@ This document defines the implementation milestone and compatibility status of e
 ### Milestone M1a (Termux Headless Slice)
 
 | ID | Surface | Description / Contract | Status | Target Fixture |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `cli.print` | CLI | `--print` headless prompt execution | **candidate** | `cli.print.basic` |
 | `agent.serial-tools` | Agent | Serial tool call validation, execution and cancellation | **candidate** | `agent.serial-tool-loop` |
 | `provider.openai-chat` | Provider | OpenAI Chat Completions compatible SSE with local mock | **candidate** | `provider.openai-chat.fragmented-sse` |
+| `provider.google` | Provider | Google gemini-2.0-flash explicit model routing | **supported** | Local verification |
 | `tool.read` | Built-in Tool | Bounded text read with 1-indexed offsets | **candidate** | `tool.read.bounds` |
 | `tool.bash` | Built-in Tool | Shell execution, process-group cancellation and reaping | **candidate** | `tool.bash.cancel-descendants` |
 | `resources.context` | Resources | Global/current `AGENTS.md` or `CLAUDE.md` context discovery | **candidate** | `resource.context-precedence` |
 | `resources.trust` | Resources | Trust decision data model; no project executable resource loading | **candidate** | `resource.untrusted-project` |
-| `session.native-write` | Session | New native v3-compatible JSONL sessions under `~/.pi-rs` | **candidate** | `session.native-append-recover` |
+| `session.native-write` | Session | Legacy single JSON session format (v3 JSONL pending CLI migration) | **candidate** | `session.native-append-recover` |
 | `session.pi-import` | Session | Read-only import of original Pi v1/v2/v3 sessions | **read-only** | `session.pi-import-checksum` |
 | `session.pi-cow` | Session | COW native session created on first mutation of imported Pi session | **candidate** | `session.pi-cow-provenance` |
 | `extension.none-required` | Extensions | Core functionality operates normally when Node is absent | **candidate** | `extension.node-absent` |
@@ -33,7 +34,7 @@ This document defines the implementation milestone and compatibility status of e
 ### Milestone M1 (Expanded Headless Pi)
 
 | ID | Surface | Description / Contract | Status | Target Fixture |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `cli.json-events` | CLI | Structured JSON event output | **deferred** | None |
 | `agent.retry-auto-compaction` | Agent | Serial retry and one automatic context-overflow compaction retry | **deferred** | None |
 | `tool.write` | Built-in Tool | Atomic write semantics | **deferred** | None |
@@ -44,7 +45,7 @@ This document defines the implementation milestone and compatibility status of e
 ### Milestone M2 (Pi Interactive & Public API Parity)
 
 | ID | Surface | Description / Contract | Status | Target Fixture |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `cli.interactive` | CLI | Interactive terminal mode | **deferred** | None |
 | `cli.rpc` | CLI | Public Pi JSONL RPC | **deferred** | None |
 | `agent.parallel-tools` | Agent | Parallel batch ordering and cancellation | **deferred** | None |
@@ -56,7 +57,7 @@ This document defines the implementation milestone and compatibility status of e
 ### Milestone M3 (Legacy Extension Host)
 
 | ID | Surface | Description / Contract | Status | Target Fixture |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `resources.remote-packages` | Resources | `npm:` and `git:` package source installation | **unsupported** | `resource.remote-package-diagnostic` |
 | `session.pi-inplace-write` | Session | In-place mutation of Pi session files | **unsupported** | `session.pi-inplace-write-diagnostic` |
 | `extension.pi-tier-a` | Extensions | Tools, commands, cancelable hooks, persisted state and basic UI via Node host | **deferred** | None |

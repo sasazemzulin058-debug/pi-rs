@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+import sys
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
+
+def check_docs():
+    errors = []
+    
+    # Check README.md contains baseline references
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    if "fb9be67" not in readme and "f0deb8d" not in readme:
+        errors.append("README.md is missing reference to baseline commits")
+        
+    # Check compatibility matrix reflects current status
+    matrix = (ROOT / "docs" / "compatibility-matrix.md").read_text(encoding="utf-8")
+    if "gemini-2.0-flash" not in matrix:
+        errors.append("docs/compatibility-matrix.md missing explicit Gemini model routing")
+        
+    if errors:
+        print("Doc consistency check failed:")
+        for err in errors:
+            print(f" - {err}")
+        sys.exit(1)
+        
+    print("Doc consistency check passed.")
+
+if __name__ == "__main__":
+    check_docs()
