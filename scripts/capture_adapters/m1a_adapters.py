@@ -12,10 +12,10 @@ from contract_fixture_lib import normalize_structure
 
 def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
     """Capture case cli.print.basic using upstream Pi CLI print mode and temporary faux provider extension."""
-    extension_code = """import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+    extension_code = """import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 
 export default function (api: any) {
-  const faux = registerFauxProvider({
+  const faux = fauxProvider({
     api: "faux",
     provider: "faux",
     models: [{ id: "faux-1", name: "Faux Model" }],
@@ -23,20 +23,7 @@ export default function (api: any) {
   faux.setResponses([
     fauxAssistantMessage("hello", { timestamp: 1000 }),
   ]);
-  api.registerProvider("faux", {
-    baseUrl: "http://127.0.0.1:9",
-    api: "faux",
-    apiKey: "faux-test-key",
-    models: [{
-      id: "faux-1",
-      name: "Faux Model",
-      reasoning: false,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 10000,
-      maxTokens: 1000,
-    }],
-  });
+  api.registerProvider(faux.provider);
 }
 """
     with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
@@ -66,10 +53,10 @@ export default function (api: any) {
 
 def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
     """Capture case agent.serial-tool-loop using temporary faux provider extension with tool calls."""
-    extension_code = """import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+    extension_code = """import { fauxAssistantMessage, fauxToolCall, fauxProvider } from "@earendil-works/pi-ai";
 
 export default function (api: any) {
-  const faux = registerFauxProvider({
+  const faux = fauxProvider({
     api: "faux",
     provider: "faux",
     models: [{ id: "faux-1", name: "Faux Model" }],
@@ -81,20 +68,7 @@ export default function (api: any) {
     }),
     fauxAssistantMessage("file read completed", { timestamp: 2000 }),
   ]);
-  api.registerProvider("faux", {
-    baseUrl: "http://127.0.0.1:9",
-    api: "faux",
-    apiKey: "faux-test-key",
-    models: [{
-      id: "faux-1",
-      name: "Faux Model",
-      reasoning: false,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 10000,
-      maxTokens: 1000,
-    }],
-  });
+  api.registerProvider(faux.provider);
 }
 """
     with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
