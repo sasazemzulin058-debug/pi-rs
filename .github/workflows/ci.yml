@@ -73,11 +73,15 @@ jobs:
           cargo audit --ignore RUSTSEC-2026-0204 --ignore RUSTSEC-2026-0185
           --ignore RUSTSEC-2026-0190
 
-  contract-comparator-gate:
-    name: contract-comparator-gate
+  m1a-manifest-gate:
+    name: m1a-manifest-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -85,9 +89,9 @@ jobs:
       - name: Run Python contract tests
         run: |
           python3 -m unittest discover -s tests/contract -p "test_*.py"
-      - name: Validate fixture manifest (M0 validation)
+      - name: Validate fixture manifest (M1a requirement check)
         run: |
-          python3 scripts/validate-fixture-manifest
+          python3 scripts/validate-fixture-manifest --milestone M1a
       - name: Run comparator self-tests
         run: |
           python3 scripts/compare-contract-fixtures --self-test
@@ -106,9 +110,8 @@ jobs:
 
   ci-required:
     name: ci-required
-    needs: [test, supply-chain, contract-comparator-gate, docs-check]
+    needs: [test, supply-chain, m1a-manifest-gate, docs-check]
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate required status
         run: echo "All required CI jobs completed successfully."
-

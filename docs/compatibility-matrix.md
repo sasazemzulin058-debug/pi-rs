@@ -21,7 +21,6 @@ This document defines the implementation milestone and compatibility status of e
 | `cli.print` | CLI | `--print` headless prompt execution | **candidate** | `cli.print.basic` |
 | `agent.serial-tools` | Agent | Serial tool call validation, execution and cancellation | **candidate** | `agent.serial-tool-loop` |
 | `provider.openai-chat` | Provider | OpenAI Chat Completions compatible SSE with local mock | **candidate** | `provider.openai-chat.fragmented-sse` |
-| `provider.google` | Provider | Google gemini-2.0-flash explicit model routing | **supported** | Local verification |
 | `tool.read` | Built-in Tool | Bounded text read with 1-indexed offsets | **candidate** | `tool.read.bounds` |
 | `tool.bash` | Built-in Tool | Shell execution, process-group cancellation and reaping | **candidate** | `tool.bash.cancel-descendants` |
 | `resources.context` | Resources | Global/current `AGENTS.md` or `CLAUDE.md` context discovery | **candidate** | `resource.context-precedence` |

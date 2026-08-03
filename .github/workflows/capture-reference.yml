@@ -13,38 +13,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24.18.0'
-          
+
       - name: Clone upstream Pi
         run: |
-          git clone https://github.com/earendil-works/pi-mono.git upstream-pi-mono
+          git clone https://github.com/earendil-works/pi-mono.git \
+            upstream-pi-mono
           cd upstream-pi-mono
           git checkout 2efa728d2ee90ef597626e96b1e28ef2b279f07c
-          
+
       - name: Verify lockfile SHA-256
         run: |
-          # Upstream lockfile SHA-256 must match exactly:
-          # 472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59
-          test "$(sha256sum upstream-pi-mono/package-lock.json | awk '{print $1}')" = "472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
-          
+          # Upstream lockfile SHA-256 must match exactly
+          EXP="472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
+          ACT=$(sha256sum upstream-pi-mono/package-lock.json | cut -d' ' -f1)
+          test "$ACT" = "$EXP"
+
       - name: Install upstream Pi dependencies
         run: |
           cd upstream-pi-mono
           npm ci
           npm run hydrate-model-data --workspace=@earendil-works/pi-ai
-          
+
       - name: Run reference capture
         env:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python3 scripts/capture-upstream-fixtures --milestone "${{ github.event.inputs.milestone }}"
-          
+          python3 scripts/capture-upstream-fixtures \
+            --milestone "${{ github.event.inputs.milestone }}"
+
+      - name: Validate captured fixture manifest
+        run: |
+          python3 scripts/validate-fixture-manifest \
+            --milestone "${{ github.event.inputs.milestone }}"
+
       - name: Archive captured fixtures
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: captured-fixtures-${{ github.event.inputs.milestone }}
