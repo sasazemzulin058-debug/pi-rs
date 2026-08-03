@@ -1,7 +1,7 @@
 //! Interactive permission prompt for the CLI.
 
 use std::io::{BufRead, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pi_agent::{PermissionDecision, PermissionPolicy};
@@ -20,6 +20,7 @@ pub enum Mode {
 pub struct CliPermission {
     mode: Mode,
     allowed_session: Mutex<std::collections::HashSet<String>>,
+    reader: Option<Arc<Mutex<Box<dyn BufRead + Send>>>>,
 }
 
 impl CliPermission {
@@ -27,6 +28,16 @@ impl CliPermission {
         Self {
             mode,
             allowed_session: Mutex::new(Default::default()),
+            reader: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_reader(mode: Mode, reader: Box<dyn BufRead + Send>) -> Self {
+        Self {
+            mode,
+            allowed_session: Mutex::new(Default::default()),
+            reader: Some(Arc::new(Mutex::new(reader))),
         }
     }
 }
@@ -44,7 +55,9 @@ impl PermissionPolicy for CliPermission {
             Mode::DenyAll => PermissionDecision::Deny {
                 reason: "permissions disabled".into(),
             },
-            Mode::Interactive => prompt(tool_name, args, &self.allowed_session).await,
+            Mode::Interactive => {
+                prompt(tool_name, args, &self.allowed_session, self.reader.clone()).await
+            }
         }
     }
 }
@@ -63,6 +76,7 @@ async fn prompt(
     tool_name: &str,
     args: &Value,
     allowed_session: &Mutex<std::collections::HashSet<String>>,
+    reader: Option<Arc<Mutex<Box<dyn BufRead + Send>>>>,
 ) -> PermissionDecision {
     let tool_name = tool_name.to_string();
     let args_pretty = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
@@ -80,7 +94,21 @@ async fn prompt(
         let _ = write!(err, "Allow? [y]es / [a]llow-session / [n]o: ");
         let _ = err.flush();
         let mut line = String::new();
-        match std::io::stdin().lock().read_line(&mut line) {
+        let read_res = if let Some(custom_reader) = reader {
+            if let Ok(mut guard) = custom_reader.lock() {
+                guard.read_line(&mut line)
+            } else {
+                return PermissionDecision::Deny {
+                    reason: "permission prompt lock failed".into(),
+                };
+            }
+        } else {
+            std::io::stdin().lock().read_line(&mut line)
+        };
+        match read_res {
+            Ok(0) => PermissionDecision::Deny {
+                reason: "permission prompt reached EOF".into(),
+            },
             Ok(_) => parse_permission_answer(&line),
             Err(_) => PermissionDecision::Deny {
                 reason: "permission prompt failed".into(),
@@ -105,8 +133,22 @@ async fn prompt(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_permission_answer;
+    use super::*;
     use pi_agent::PermissionDecision;
+    use std::io::Cursor;
+
+    #[tokio::test]
+    async fn prompt_with_empty_reader_returns_eof_deny() {
+        let empty_reader = Box::new(Cursor::new(Vec::<u8>::new()));
+        let policy = CliPermission::with_reader(Mode::Interactive, empty_reader);
+        let decision = policy.check("bash", &serde_json::json!({})).await;
+        assert_eq!(
+            decision,
+            PermissionDecision::Deny {
+                reason: "permission prompt reached EOF".into()
+            }
+        );
+    }
 
     #[test]
     fn permission_answers_are_fail_closed() {
