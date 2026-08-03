@@ -49,6 +49,16 @@ impl PermissionPolicy for CliPermission {
     }
 }
 
+fn parse_permission_answer(answer: &str) -> PermissionDecision {
+    match answer.trim().to_lowercase().as_str() {
+        "y" | "yes" => PermissionDecision::Allow,
+        "a" | "all" | "allow" | "session" => PermissionDecision::AllowSession,
+        _ => PermissionDecision::Deny {
+            reason: "user denied".into(),
+        },
+    }
+}
+
 async fn prompt(
     tool_name: &str,
     args: &Value,
@@ -70,13 +80,10 @@ async fn prompt(
         let _ = write!(err, "Allow? [y]es / [a]llow-session / [n]o: ");
         let _ = err.flush();
         let mut line = String::new();
-        let _ = std::io::stdin().lock().read_line(&mut line);
-        let ans = line.trim().to_lowercase();
-        match ans.as_str() {
-            "y" | "yes" | "" => PermissionDecision::Allow,
-            "a" | "all" | "allow" | "session" => PermissionDecision::AllowSession,
-            _ => PermissionDecision::Deny {
-                reason: "user denied".into(),
+        match std::io::stdin().lock().read_line(&mut line) {
+            Ok(_) => parse_permission_answer(&line),
+            Err(_) => PermissionDecision::Deny {
+                reason: "permission prompt failed".into(),
             },
         }
     })
@@ -94,4 +101,51 @@ async fn prompt(
         }
     }
     decision
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_permission_answer;
+    use pi_agent::PermissionDecision;
+
+    #[test]
+    fn permission_answers_are_fail_closed() {
+        let cases = [
+            ("y", PermissionDecision::Allow),
+            (" yes ", PermissionDecision::Allow),
+            ("a", PermissionDecision::AllowSession),
+            (
+                "allow-session",
+                PermissionDecision::Deny {
+                    reason: "user denied".into(),
+                },
+            ),
+            (
+                "",
+                PermissionDecision::Deny {
+                    reason: "user denied".into(),
+                },
+            ),
+            (
+                "   ",
+                PermissionDecision::Deny {
+                    reason: "user denied".into(),
+                },
+            ),
+            (
+                "maybe",
+                PermissionDecision::Deny {
+                    reason: "user denied".into(),
+                },
+            ),
+        ];
+
+        for (answer, expected) in cases {
+            assert_eq!(
+                parse_permission_answer(answer),
+                expected,
+                "answer: {answer:?}"
+            );
+        }
+    }
 }
