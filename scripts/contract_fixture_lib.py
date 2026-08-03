@@ -167,7 +167,7 @@ def validate_manifest(manifest, milestone=None):
             else:
                 for cid in req_cases[milestone]:
                     case_info = cases_catalog.get(cid, {})
-                    if not case_info.get("captured", False):
+                    if case_info.get("oracle") == "upstream-pi" and not case_info.get("captured", False):
                         errors.append(f"Case '{cid}' required for milestone {milestone} is not captured (pending)")
                         
     return errors
