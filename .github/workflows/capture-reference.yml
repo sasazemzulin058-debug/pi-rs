@@ -44,6 +44,21 @@ jobs:
           npm ci
           npm run hydrate-model-data --workspace=@earendil-works/pi-ai
 
+      - name: Verify generated model data
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path(
+              "upstream-pi-mono/packages/ai/src/providers/data/amazon-bedrock.json"
+          )
+          raw = path.read_bytes()
+          print(f"amazon-bedrock.json bytes={len(raw)} prefix={raw[:80]!r}")
+          json.loads(raw)
+          print("amazon-bedrock.json is valid JSON")
+          PY
+
       - name: Run reference capture
         env:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
