@@ -31,6 +31,8 @@ fn session_id_validation_rejects_traversal_and_malformed() {
         "foo\\bar",
         "foo\0bar",
         "foo\nbar",
+        "valid.id.name",
+        "session.json",
         "",
         &"a".repeat(129),
     ];
@@ -45,7 +47,7 @@ fn session_id_validation_rejects_traversal_and_malformed() {
     let good_ids = [
         "019fc623-1911-74cd-8e54-2861ae8c8bc0",
         "session-123_abc",
-        "valid.id.name",
+        "18e12345678-a1b2c3d4",
     ];
 
     for good in good_ids {
@@ -66,6 +68,55 @@ fn session_load_prevents_path_traversal() {
         "unexpected error message: {err_msg}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn session_rejects_symlink_directory_and_files() {
+    let config_dir = temp_dir();
+
+    // Test 1: Reject if sessions directory is a symlink
+    let target_dir = temp_dir();
+    let symlink_sessions = session::sessions_dir(&config_dir);
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&target_dir, &symlink_sessions).unwrap();
+        assert!(session::save(
+            &config_dir,
+            &session::Session::new(&Model::anthropic_claude_sonnet_4_6())
+        )
+        .is_err());
+        assert!(session::load(&config_dir, "019fc623-1911-74cd-8e54-2861ae8c8bc0").is_err());
+        assert!(session::list(&config_dir).is_err());
+        std::fs::remove_file(&symlink_sessions).unwrap();
+    }
+
+    // Test 2: Reject if individual session file is a symlink
+    let sessions_real_dir = session::sessions_dir(&config_dir);
+    std::fs::create_dir_all(&sessions_real_dir).unwrap();
+    let outside_file = target_dir.join("outside.json");
+    std::fs::write(&outside_file, "{}").unwrap();
+    let symlink_file = sessions_real_dir.join("session-symlink.json");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside_file, &symlink_file).unwrap();
+        assert!(session::load(&config_dir, "session-symlink").is_err());
+        assert!(session::save(
+            &config_dir,
+            &session::Session {
+                id: "session-symlink".to_string(),
+                created_ms: 0,
+                updated_ms: 0,
+                model: "m".into(),
+                provider: "p".into(),
+                messages: vec![],
+                origin: session::SessionOrigin::Native,
+            }
+        )
+        .is_err());
+    }
+
+    let _ = std::fs::remove_dir_all(&config_dir);
+    let _ = std::fs::remove_dir_all(&target_dir);
 }
 
 #[test]

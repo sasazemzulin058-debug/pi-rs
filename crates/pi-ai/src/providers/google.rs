@@ -279,7 +279,10 @@ impl Provider for GoogleProvider {
                 if ev.data.is_empty() { continue; }
                 let chunk: Chunk = match serde_json::from_str(&ev.data) {
                     Ok(c) => c,
-                    Err(_) => continue,
+                    Err(e) => {
+                        yield Err(Error::InvalidResponse(format!("malformed sse data: {e}")));
+                        return;
+                    }
                 };
                 if let Some(m) = chunk.model_version { response_model = Some(m); }
                 if let Some(u) = chunk.usage_metadata {
@@ -308,6 +311,12 @@ impl Provider for GoogleProvider {
                                 }
                             }
                             if let Some(fc) = part.function_call {
+                                if fc.name.is_empty() {
+                                    yield Err(Error::InvalidResponse(
+                                        "missing function_call name in Google Gemini stream".into(),
+                                    ));
+                                    return;
+                                }
                                 let id = format!("call_{}", tool_blocks.len() + 1);
                                 let block_index = text_index + if text_started { 1 } else { 0 } + tool_blocks.len();
                                 yield Ok(AssistantMessageEvent::ToolCallStart {

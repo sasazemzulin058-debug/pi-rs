@@ -72,14 +72,11 @@ pub fn validate_session_id(id: &str) -> anyhow::Result<&str> {
     if id.len() > 128 {
         anyhow::bail!("session id exceeds maximum length (128 characters)");
     }
-    // Reject path traversal, directory separators, control chars, null bytes, backslashes
+    // Reject path traversal, dots, directory separators, control chars, null bytes, backslashes, non-alphanumeric/hyphen/underscore
     for c in id.chars() {
-        if c.is_control() || c == '/' || c == '\\' || c == '\0' {
+        if !c.is_ascii_alphanumeric() && c != '-' && c != '_' {
             anyhow::bail!("invalid character in session id: {c:?}");
         }
-    }
-    if id == "." || id == ".." || id.contains("..") {
-        anyhow::bail!("path traversal sequence in session id: {id}");
     }
     Ok(id)
 }
@@ -88,10 +85,27 @@ pub fn sessions_dir(config_dir: &Path) -> PathBuf {
     config_dir.join("sessions")
 }
 
+pub fn check_sessions_dir_not_symlink(dir: &Path) -> anyhow::Result<()> {
+    if let Ok(meta) = std::fs::symlink_metadata(dir) {
+        if meta.file_type().is_symlink() {
+            anyhow::bail!("sessions directory is a symlink: {}", dir.display());
+        }
+    }
+    Ok(())
+}
+
 pub fn session_file_path(config_dir: &Path, id: &str) -> anyhow::Result<PathBuf> {
     let clean_id = validate_session_id(id)?;
     let dir = sessions_dir(config_dir);
+    check_sessions_dir_not_symlink(&dir)?;
+
     let path = dir.join(format!("{clean_id}.json"));
+
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() {
+            anyhow::bail!("session file is a symlink: {}", path.display());
+        }
+    }
 
     // Ensure resolved path is strictly contained within sessions_dir
     if let (Ok(canonical_dir), Ok(canonical_path)) = (dir.canonicalize(), path.canonicalize()) {
@@ -105,9 +119,24 @@ pub fn session_file_path(config_dir: &Path, id: &str) -> anyhow::Result<PathBuf>
 pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
     let clean_id = validate_session_id(&session.id)?;
     let dir = sessions_dir(config_dir);
+    check_sessions_dir_not_symlink(&dir)?;
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
+    check_sessions_dir_not_symlink(&dir)?;
+
     let path = dir.join(format!("{clean_id}.json"));
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if meta.file_type().is_symlink() {
+            anyhow::bail!("session file is a symlink: {}", path.display());
+        }
+    }
+
     let tmp_path = dir.join(format!("{clean_id}.json.tmp.{}", rand_u32()));
+    if let Ok(meta) = std::fs::symlink_metadata(&tmp_path) {
+        if meta.file_type().is_symlink() {
+            anyhow::bail!("temp session file is a symlink: {}", tmp_path.display());
+        }
+    }
+
     let json = serde_json::to_string_pretty(session)?;
 
     // ponytail: atomic rename provides crash-safety on POSIX/same filesystem; upgrade to lockfile or cross-dev fallback if needed.
@@ -524,6 +553,7 @@ pub fn import_as_cow(import: &PiSessionImport) -> Session {
 
 pub fn list(config_dir: &Path) -> anyhow::Result<Vec<SessionSummary>> {
     let dir = sessions_dir(config_dir);
+    check_sessions_dir_not_symlink(&dir)?;
     if !dir.exists() {
         return Ok(Vec::new());
     }
@@ -532,6 +562,18 @@ pub fn list(config_dir: &Path) -> anyhow::Result<Vec<SessionSummary>> {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+        }
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        if validate_session_id(stem).is_err() {
             continue;
         }
         let text = std::fs::read_to_string(&path)?;
