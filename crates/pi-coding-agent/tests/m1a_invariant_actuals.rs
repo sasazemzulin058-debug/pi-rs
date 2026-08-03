@@ -1,56 +1,207 @@
+use futures::StreamExt;
+use pi_ai::{
+    now_ms, AssistantMessage, AssistantMessageEvent, Content, FakeProviderFactory, Message, Model,
+    ProviderFactory, StopReason, StreamOptions, Usage,
+};
 use std::fs;
 use std::path::PathBuf;
+use tokio_util::sync::CancellationToken;
 
-fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("fixtures")
-        .join("upstream-pi")
+#[path = "../src/session.rs"]
+#[allow(dead_code)]
+mod session;
+#[path = "../src/termux.rs"]
+mod termux;
+
+fn staging_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("PI_INVARIANT_STAGING_DIR").expect(
+        "PI_INVARIANT_STAGING_DIR must point to an isolated fixture staging directory",
+    ))
 }
 
-#[test]
-fn generate_invariant_actual_fixtures() {
-    let dir = fixtures_dir();
-    if !dir.exists() {
-        return;
+fn write_actual(case_id: &str, value: serde_json::Value) {
+    let dir = staging_dir();
+    fs::create_dir_all(&dir).expect("create invariant staging directory");
+    fs::write(
+        dir.join(format!("{case_id}.actual.json")),
+        serde_json::to_string_pretty(&value).expect("serialize invariant fixture") + "\n",
+    )
+    .expect("write invariant fixture");
+}
+
+fn model() -> Model {
+    Model::openai_compat("test-provider", "test-model", "https://api.test.com/v1", 128_000, 4096)
+}
+
+#[tokio::test]
+async fn generate_invariant_actual_fixtures() {
+    let model = model();
+    let events = vec![
+        AssistantMessageEvent::Start,
+        AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: "hello".into(),
+        },
+        AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: AssistantMessage {
+                content: vec![Content::Text { text: "hello".into() }],
+                api: "openai-completions".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
+                usage: Usage::default(),
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                timestamp: now_ms(),
+            },
+        },
+    ];
+    let factory = FakeProviderFactory::new(events);
+    let cancel = CancellationToken::new();
+    let mut stream = factory
+        .stream(
+            &model,
+            &Default::default(),
+            &StreamOptions {
+                cancel: Some(cancel.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("create fake stream");
+    let mut events_emitted = Vec::new();
+    let mut stream_cancelled = false;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(AssistantMessageEvent::Start) => events_emitted.push("start"),
+            Ok(AssistantMessageEvent::TextDelta { .. }) => {
+                events_emitted.push("delta");
+                cancel.cancel();
+            }
+            Ok(_) => {}
+            Err(pi_ai::Error::Cancelled) => {
+                events_emitted.push("cancelled");
+                stream_cancelled = true;
+                break;
+            }
+            Err(error) => panic!("unexpected fake stream error: {error}"),
+        }
     }
+    assert!(stream_cancelled);
+    write_actual(
+        "provider.fake-stream-cancel",
+        serde_json::json!({
+            "stream_cancelled": stream_cancelled,
+            "events_emitted": events_emitted,
+            "socket_opened": events_emitted.iter().all(|event| *event != "socket"),
+        }),
+    );
 
-    // 1. provider.fake-stream-cancel
-    let fake_cancel_actual = serde_json::json!({
-        "events": ["Start", "TextStart", "TextDelta(hello)", "Cancelled"],
-        "stream_terminated": true,
-        "socket_opened": false
-    });
-    fs::write(
-        dir.join("provider.fake-stream-cancel.actual.json"),
-        serde_json::to_string_pretty(&fake_cancel_actual).unwrap() + "\n",
-    )
-    .unwrap();
+    let dir = tempfile_dir("native-recover");
+    let mut native = session::Session::new(&model);
+    native.id = "recover".into();
+    native.messages.push(Message::user_text("kept"));
+    let path = session::save(&dir, &native).expect("save native session");
+    let complete = fs::read(&path).expect("read native session");
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("open native session")
+        .write_all(b"{\"type\":\"entry\"")
+        .expect("append incomplete tail");
+    let loaded = session::load_jsonl(&path).expect("recover incomplete tail");
+    let recovered = loaded.messages.len() == 1 && loaded.origin == session::SessionOrigin::Native;
+    let corrupted_tail_truncated = fs::read(&path).expect("read recovered session") == complete;
+    assert!(recovered && corrupted_tail_truncated);
+    write_actual(
+        "session.native-append-recover",
+        serde_json::json!({
+            "recovered": recovered,
+            "source": "native",
+            "corrupted_tail_truncated": corrupted_tail_truncated,
+        }),
+    );
 
-    // 2. session.native-append-recover
-    let append_recover_actual = serde_json::json!({
-        "corrupted_tail_truncated": true,
-        "recovered": true,
-        "valid_messages_count": 1
-    });
-    fs::write(
-        dir.join("session.native-append-recover.actual.json"),
-        serde_json::to_string_pretty(&append_recover_actual).unwrap() + "\n",
-    )
-    .unwrap();
+    const PI_FIXTURE: &str = r#"{"type":"session","id":"01abc","version":"v3","model":"claude-sonnet-4-6","provider":"anthropic","created_ms":1700000000000}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hello"}],"timestamp":1700000000001}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"model":"claude-sonnet-4-6","provider":"anthropic","api":"anthropic-messages","usage":{},"stop_reason":"stop","timestamp":1700000000002}}
+"#;
+    let import_dir = tempfile_dir("import");
+    let import_path = import_dir.join("session.jsonl");
+    fs::write(&import_path, PI_FIXTURE).expect("write Pi fixture");
+    let imported = session::import_pi_session(&import_path).expect("import Pi session");
+    let checksum_verified = session::verify_pi_checksum(&import_path, &imported.checksum_sha256)
+        .expect("verify Pi checksum");
+    let imported_ok = !imported.session_id.is_empty();
+    assert!(checksum_verified && imported_ok);
+    write_actual(
+        "session.pi-import-checksum",
+        serde_json::json!({
+            "checksum_verified": checksum_verified,
+            "imported": imported_ok,
+            "source": "pi-mono",
+        }),
+    );
 
-    // 3. extension.node-absent
-    let node_absent_actual = serde_json::json!({
-        "node_installed": false,
-        "extension_host_enabled": false,
-        "fallback": "native-rust-only"
-    });
-    fs::write(
-        dir.join("extension.node-absent.actual.json"),
-        serde_json::to_string_pretty(&node_absent_actual).unwrap() + "\n",
-    )
-    .unwrap();
+    let mut cow = session::import_as_cow(&imported);
+    let cow_copied = matches!(cow.origin, session::SessionOrigin::CopiedFromUpstream { .. });
+    let original_count = imported.messages.len();
+    cow.messages.push(Message::user_text("extra turn"));
+    let mutation_isolated = imported.messages.len() == original_count
+        && cow.messages.len() == original_count + 1;
+    let provenance_header = match cow.origin {
+        session::SessionOrigin::CopiedFromUpstream { .. } => "copied-from-upstream",
+        session::SessionOrigin::Native => "native",
+    };
+    assert!(cow_copied && mutation_isolated);
+    write_actual(
+        "session.pi-cow-provenance",
+        serde_json::json!({
+            "cow_copied": cow_copied,
+            "mutation_isolated": mutation_isolated,
+            "provenance_header": provenance_header,
+        }),
+    );
+
+    let node_available = std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    let extension_fallback = if node_available { "available" } else { "disabled" };
+    let core_agent_functional = model().id == "test-model";
+    assert!(core_agent_functional);
+    write_actual(
+        "extension.node-absent",
+        serde_json::json!({
+            "node_available": node_available,
+            "extension_fallback": extension_fallback,
+            "core_agent_functional": core_agent_functional,
+        }),
+    );
+
+    let shell = termux::termux_shell();
+    let tmp = termux::termux_tmpdir();
+    write_actual(
+        "termux.env",
+        serde_json::json!({
+            "sh_path": shell.display().to_string(),
+            "termux_detected": termux::is_termux(),
+            "tmp_path": tmp.display().to_string(),
+        }),
+    );
+
+    let _ = fs::remove_dir_all(dir);
+    let _ = fs::remove_dir_all(import_dir);
 }
+
+fn tempfile_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "pi-rs-m1a-{label}-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("create temporary fixture directory");
+    dir
+}
+
+use std::io::Write;

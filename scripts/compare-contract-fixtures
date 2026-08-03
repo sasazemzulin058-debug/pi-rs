@@ -81,6 +81,7 @@ def main():
     parser.add_argument("--milestone", help="Milestone to compare (e.g. M1a)")
     parser.add_argument("--self-test", action="store_true", help="Run comparator self-tests")
     parser.add_argument("--actual", help="Directory containing actual output files (required unless --self-test is specified)")
+    parser.add_argument("--invariant-only", action="store_true", help="Compare only pi-rs-invariant cases")
     args = parser.parse_args()
     
     if args.self_test:
@@ -101,6 +102,7 @@ def main():
         
         has_errors = False
         skipped_count = 0
+        failed_count = 0
         passed_count = 0
         
         for m in target_milestones:
@@ -108,14 +110,30 @@ def main():
                 print(f"Error: Milestone '{m}' not defined in manifest requiredCaseIds")
                 sys.exit(1)
                 
+            selected_cases = [
+                cid for cid in req_cases[m]
+                if not args.invariant_only or cases.get(cid, {}).get("oracle") == "pi-rs-invariant"
+            ]
             print(f"Comparing milestone {m}...")
-            for case_id in req_cases[m]:
+            required_files = {f"{cid}.actual.json" for cid in selected_cases}
+            actual_files = set(os.listdir(args.actual)) if os.path.exists(args.actual) else set()
+            for extra in sorted(actual_files - required_files):
+                print(f"Case {extra}: ERROR - extra actual output file")
+                has_errors = True
+                failed_count += 1
+            for missing in sorted(required_files - actual_files):
+                print(f"Case {missing}: ERROR - actual output file missing")
+                has_errors = True
+                failed_count += 1
+            for case_id in selected_cases:
                 case_info = cases.get(case_id, {})
+                oracle = case_info.get("oracle")
                 captured = case_info.get("captured", False)
                 
-                if not captured:
-                    print(f"Case {case_id}: REJECTED - required case is pending capture")
+                if oracle == "upstream-pi" and not captured:
+                    print(f"Case {case_id}: REJECTED - required upstream case is pending capture")
                     has_errors = True
+                    failed_count += 1
                     continue
                     
                 fixture_dir = os.path.join(
@@ -123,7 +141,7 @@ def main():
                     "fixtures", "upstream-pi"
                 )
                 expected_file = os.path.join(fixture_dir, f"{case_id}.expected.json")
-                actual_file = os.path.join(args.actual, f"{case_id}.json")
+                actual_file = os.path.join(args.actual, f"{case_id}.actual.json")
                 
                 if not os.path.exists(expected_file):
                     print(f"Case {case_id}: ERROR - expected fixture file missing at {expected_file}")
@@ -145,11 +163,24 @@ def main():
                     has_errors = True
                     continue
                     
+                if oracle == "pi-rs-invariant":
+                    if expected_data.get("case_id") != case_id or expected_data.get("oracle") != oracle:
+                        print(f"Case {case_id}: ERROR - expected envelope metadata mismatch")
+                        has_errors = True
+                        failed_count += 1
+                        continue
+                    expected_data = expected_data.get("expected")
+                    if not isinstance(expected_data, dict):
+                        print(f"Case {case_id}: ERROR - expected invariant payload missing")
+                        has_errors = True
+                        failed_count += 1
+                        continue
                 diff = compare_structures(expected_data, actual_data)
                 if diff:
                     print(f"Case {case_id}: FAILED")
                     print(diff)
                     has_errors = True
+                    failed_count += 1
                 else:
                     print(f"Case {case_id}: PASSED")
                     passed_count += 1
@@ -157,7 +188,7 @@ def main():
         print("\nSummary:")
         print(f" - Passed: {passed_count}")
         print(f" - Pending/Skipped: {skipped_count}")
-        print(f" - Failed/Errors: {1 if has_errors else 0}")
+        print(f" - Failed/Errors: {failed_count}")
         
         sys.exit(1 if has_errors else 0)
     except Exception as e:
