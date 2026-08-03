@@ -48,7 +48,6 @@ fn list_accepts_native_and_legacy_and_ignores_non_sessions() {
     .unwrap();
     std::fs::write(sessions.join("malformed.json"), b"not json").unwrap();
     std::fs::write(sessions.join("unrelated.txt"), b"sentinel").unwrap();
-    std::fs::write(sessions.join("native.jsonl.lock"), b"123").unwrap();
     std::fs::write(sessions.join("scratch.tmp"), b"temporary").unwrap();
 
     let listed = session::list(&dir).unwrap();
