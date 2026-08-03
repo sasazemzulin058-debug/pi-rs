@@ -26,7 +26,7 @@ This document defines the implementation milestone and compatibility status of e
 | `tool.bash` | Built-in Tool | Shell execution, process-group cancellation and reaping | **candidate** | `tool.bash.cancel-descendants` |
 | `resources.context` | Resources | Global/current `AGENTS.md` or `CLAUDE.md` context discovery | **candidate** | `resource.context-precedence` |
 | `resources.trust` | Resources | Trust decision data model; no project executable resource loading | **candidate** | `resource.untrusted-project` |
-| `session.native-write` | Session | Legacy single JSON session format (v3 JSONL pending CLI migration) | **candidate** | `session.native-append-recover` |
+| `session.native-write` | Session | Active v3 JSONL session persistence format with legacy single JSON read support | **candidate** | `session.native-append-recover` |
 | `session.pi-import` | Session | Read-only import of original Pi v1/v2/v3 sessions | **read-only** | `session.pi-import-checksum` |
 | `session.pi-cow` | Session | COW native session created on first mutation of imported Pi session | **candidate** | `session.pi-cow-provenance` |
 | `extension.none-required` | Extensions | Core functionality operates normally when Node is absent | **candidate** | `extension.node-absent` |
