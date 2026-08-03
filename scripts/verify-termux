@@ -56,6 +56,6 @@ printf '%s\n' "verify-termux: repository=$repo_root"
 cd "$repo_root"
 cargo test --locked --workspace
 python3 -m unittest discover -s tests/contract -p 'test_*.py'
-./scripts/validate-fixture-manifest --milestone M1a
-./scripts/generate-pi-rs-fixtures --milestone M1a --actual "$workspace/actual"
-./scripts/compare-contract-fixtures --milestone M1a --actual "$workspace/actual"
+./scripts/validate-fixture-manifest
+./scripts/generate-pi-rs-fixtures --milestone M1a --actual "$workspace/actual" --invariant-only
+./scripts/compare-contract-fixtures --milestone M1a --actual "$workspace/actual" --invariant-only

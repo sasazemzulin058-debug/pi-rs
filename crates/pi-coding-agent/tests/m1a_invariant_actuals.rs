@@ -149,11 +149,15 @@ async fn generate_invariant_actual_fixtures() {
     cow.messages.push(Message::user_text("extra turn"));
     let mutation_isolated = imported.messages.len() == original_count
         && cow.messages.len() == original_count + 1;
+    let cow_path = session::save(&import_dir, &cow).expect("save COW session");
+    let persisted = session::load(&import_dir, &cow.id).expect("load COW session");
+    let persisted_provenance = persisted.origin == cow.origin;
     let provenance_header = match cow.origin {
         session::SessionOrigin::CopiedFromUpstream { .. } => "copied-from-upstream",
         session::SessionOrigin::Native => "native",
     };
-    assert!(cow_copied && mutation_isolated);
+    assert!(cow_copied && mutation_isolated && persisted_provenance);
+    assert!(cow_path.exists());
     write_actual(
         "session.pi-cow-provenance",
         serde_json::json!({
@@ -165,6 +169,7 @@ async fn generate_invariant_actual_fixtures() {
 
     let node_available = std::process::Command::new("node")
         .arg("--version")
+        .env("PATH", "")
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false);

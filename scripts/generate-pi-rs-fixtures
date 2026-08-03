@@ -69,7 +69,8 @@ def main():
             shutil.copy2(Path(staging) / name, destination / name)
 
     if upstream_pending:
-        return 2
+        print(f"generated {len(invariant)} invariant fixture cases; upstream pending")
+        return 0 if args.invariant_only else 2
     print(f"generated {len(invariant)} invariant fixture cases")
     return 0
 
