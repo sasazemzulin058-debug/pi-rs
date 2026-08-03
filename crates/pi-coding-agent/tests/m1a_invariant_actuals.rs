@@ -1,9 +1,9 @@
 use futures::StreamExt;
+use pi_agent::{run_agent_with_history, AgentConfig};
 use pi_ai::{
     now_ms, AssistantMessage, AssistantMessageEvent, Content, FakeProviderFactory, Message, Model,
     ProviderFactory, StopReason, StreamOptions, Usage,
 };
-use pi_agent::{run_agent_with_history, AgentConfig};
 use std::fs;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
@@ -31,7 +31,13 @@ fn write_actual(case_id: &str, value: serde_json::Value) {
 }
 
 fn model() -> Model {
-    Model::openai_compat("test-provider", "test-model", "https://api.test.com/v1", 128_000, 4096)
+    Model::openai_compat(
+        "test-provider",
+        "test-model",
+        "https://api.test.com/v1",
+        128_000,
+        4096,
+    )
 }
 
 #[tokio::test]
@@ -46,7 +52,9 @@ async fn generate_invariant_actual_fixtures() {
         AssistantMessageEvent::Done {
             reason: StopReason::Stop,
             message: AssistantMessage {
-                content: vec![Content::Text { text: "hello".into() }],
+                content: vec![Content::Text {
+                    text: "hello".into(),
+                }],
                 api: "openai-completions".into(),
                 provider: "test-provider".into(),
                 model: "test-model".into(),
@@ -145,11 +153,14 @@ async fn generate_invariant_actual_fixtures() {
     );
 
     let mut cow = session::import_as_cow(&imported);
-    let cow_copied = matches!(cow.origin, session::SessionOrigin::CopiedFromUpstream { .. });
+    let cow_copied = matches!(
+        cow.origin,
+        session::SessionOrigin::CopiedFromUpstream { .. }
+    );
     let original_count = imported.messages.len();
     cow.messages.push(Message::user_text("extra turn"));
-    let mutation_isolated = imported.messages.len() == original_count
-        && cow.messages.len() == original_count + 1;
+    let mutation_isolated =
+        imported.messages.len() == original_count && cow.messages.len() == original_count + 1;
     let cow_path = session::save(&import_dir, &cow).expect("save COW session");
     let persisted = session::load(&import_dir, &cow.id).expect("load COW session");
     let persisted_provenance = persisted.origin == cow.origin;
@@ -174,29 +185,32 @@ async fn generate_invariant_actual_fixtures() {
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false);
-    let extension_fallback = if node_available { "available" } else { "disabled" };
-    let core_config = AgentConfig::new(model.clone(), "test").with_max_turns(1).with_provider_factory(
-        std::sync::Arc::new(FakeProviderFactory::new(vec![AssistantMessageEvent::Done {
-            reason: StopReason::Stop,
-            message: AssistantMessage {
-                content: vec![Content::Text { text: "ok".into() }],
-                api: "openai-completions".into(),
-                provider: "test-provider".into(),
-                model: "test-model".into(),
-                usage: Usage::default(),
-                stop_reason: StopReason::Stop,
-                error_message: None,
-                timestamp: now_ms(),
+    let extension_fallback = if node_available {
+        "available"
+    } else {
+        "disabled"
+    };
+    let core_config = AgentConfig::new(model.clone(), "test")
+        .with_max_turns(1)
+        .with_provider_factory(std::sync::Arc::new(FakeProviderFactory::new(vec![
+            AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message: AssistantMessage {
+                    content: vec![Content::Text { text: "ok".into() }],
+                    api: "openai-completions".into(),
+                    provider: "test-provider".into(),
+                    model: "test-model".into(),
+                    usage: Usage::default(),
+                    stop_reason: StopReason::Stop,
+                    error_message: None,
+                    timestamp: now_ms(),
+                },
             },
-        }])) ,
-    );
-    let core_agent_functional = run_agent_with_history(
-        &core_config,
-        vec![Message::user_text("ping")],
-        None,
-    )
-    .await
-    .is_ok();
+        ])));
+    let core_agent_functional =
+        run_agent_with_history(&core_config, vec![Message::user_text("ping")], None)
+            .await
+            .is_ok();
     assert!(core_agent_functional);
     write_actual(
         "extension.node-absent",
@@ -223,10 +237,7 @@ async fn generate_invariant_actual_fixtures() {
 }
 
 fn tempfile_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "pi-rs-m1a-{label}-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("pi-rs-m1a-{label}-{}", std::process::id()));
     fs::create_dir_all(&dir).expect("create temporary fixture directory");
     dir
 }
