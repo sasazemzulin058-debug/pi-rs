@@ -65,15 +65,49 @@ impl Session {
     }
 }
 
+pub fn validate_session_id(id: &str) -> anyhow::Result<&str> {
+    if id.is_empty() {
+        anyhow::bail!("session id cannot be empty");
+    }
+    if id.len() > 128 {
+        anyhow::bail!("session id exceeds maximum length (128 characters)");
+    }
+    // Reject path traversal, directory separators, control chars, null bytes, backslashes
+    for c in id.chars() {
+        if c.is_control() || c == '/' || c == '\\' || c == '\0' {
+            anyhow::bail!("invalid character in session id: {c:?}");
+        }
+    }
+    if id == "." || id == ".." || id.contains("..") {
+        anyhow::bail!("path traversal sequence in session id: {id}");
+    }
+    Ok(id)
+}
+
 pub fn sessions_dir(config_dir: &Path) -> PathBuf {
     config_dir.join("sessions")
 }
 
+pub fn session_file_path(config_dir: &Path, id: &str) -> anyhow::Result<PathBuf> {
+    let clean_id = validate_session_id(id)?;
+    let dir = sessions_dir(config_dir);
+    let path = dir.join(format!("{clean_id}.json"));
+
+    // Ensure resolved path is strictly contained within sessions_dir
+    if let (Ok(canonical_dir), Ok(canonical_path)) = (dir.canonicalize(), path.canonicalize()) {
+        if !canonical_path.starts_with(&canonical_dir) {
+            anyhow::bail!("session path escapes session directory");
+        }
+    }
+    Ok(path)
+}
+
 pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
+    let clean_id = validate_session_id(&session.id)?;
     let dir = sessions_dir(config_dir);
     std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
-    let path = dir.join(format!("{}.json", session.id));
-    let tmp_path = dir.join(format!("{}.json.tmp.{}", session.id, rand_u32()));
+    let path = dir.join(format!("{clean_id}.json"));
+    let tmp_path = dir.join(format!("{clean_id}.json.tmp.{}", rand_u32()));
     let json = serde_json::to_string_pretty(session)?;
 
     // ponytail: atomic rename provides crash-safety on POSIX/same filesystem; upgrade to lockfile or cross-dev fallback if needed.
@@ -90,7 +124,7 @@ pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
 }
 
 pub fn load(config_dir: &Path, id: &str) -> anyhow::Result<Session> {
-    let path = sessions_dir(config_dir).join(format!("{id}.json"));
+    let path = session_file_path(config_dir, id)?;
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let s: Session = serde_json::from_str(&text)?;

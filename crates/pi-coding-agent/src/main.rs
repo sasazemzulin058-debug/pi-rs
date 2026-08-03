@@ -241,7 +241,7 @@ fn run_sessions_cmd(app: &AppConfig, action: SessionAction) -> anyhow::Result<()
             Ok(())
         }
         SessionAction::Delete { id } => {
-            let path = session::sessions_dir(&app.config_dir).join(format!("{id}.json"));
+            let path = session::session_file_path(&app.config_dir, &id)?;
             std::fs::remove_file(&path)?;
             eprintln!("deleted {}", path.display());
             Ok(())

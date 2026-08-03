@@ -22,6 +22,53 @@ fn temp_dir() -> PathBuf {
 }
 
 #[test]
+fn session_id_validation_rejects_traversal_and_malformed() {
+    let bad_ids = [
+        "../etc/passwd",
+        "..",
+        ".",
+        "foo/bar",
+        "foo\\bar",
+        "foo\0bar",
+        "foo\nbar",
+        "",
+        &"a".repeat(129),
+    ];
+
+    for bad in bad_ids {
+        assert!(
+            session::validate_session_id(bad).is_err(),
+            "expected error for id: {bad:?}"
+        );
+    }
+
+    let good_ids = [
+        "019fc623-1911-74cd-8e54-2861ae8c8bc0",
+        "session-123_abc",
+        "valid.id.name",
+    ];
+
+    for good in good_ids {
+        assert_eq!(
+            session::validate_session_id(good).unwrap(),
+            good,
+            "expected success for id: {good:?}"
+        );
+    }
+}
+
+#[test]
+fn session_load_prevents_path_traversal() {
+    let dir = temp_dir();
+    let err_msg = session::load(&dir, "../outside").unwrap_err().to_string();
+    assert!(
+        err_msg.contains("path traversal") || err_msg.contains("invalid character"),
+        "unexpected error message: {err_msg}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn save_and_load_roundtrip() {
     let dir = temp_dir();
     let model = Model::anthropic_claude_sonnet_4_6();
