@@ -12,17 +12,17 @@ pub struct AppConfig {
     pub config_dir: PathBuf,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
+impl AppConfig {
+    pub fn new() -> anyhow::Result<Self> {
         let config_dir = dirs::config_dir()
             .map(|p| p.join(APP_NAME))
             .unwrap_or_else(|| PathBuf::from(".pi"));
-        Self {
-            model: default_model_from_env(),
+        Ok(Self {
+            model: default_model_from_env()?,
             max_turns: 32,
             thinking_level: ThinkingLevel::Off,
             config_dir,
-        }
+        })
     }
 }
 
@@ -40,25 +40,52 @@ pub fn parse_thinking_level(s: &str) -> Option<ThinkingLevel> {
     }
 }
 
-pub fn default_model_from_env() -> Model {
-    if let Ok(id) = std::env::var("PI_MODEL") {
-        match id.as_str() {
-            "claude-sonnet-4-6" | "claude-sonnet" | "sonnet" => {
-                return Model::anthropic_claude_sonnet_4_6();
-            }
-            "claude-opus-4-7" | "claude-opus" | "opus" => {
-                return Model::anthropic_claude_opus_4_7();
-            }
-            "gpt-4o" => return Model::openai_gpt_4o(),
-            "gpt-4o-mini" => return Model::openai_gpt_4o_mini(),
-            _ => {}
+pub fn resolve_model(id: &str) -> anyhow::Result<Model> {
+    match id.to_ascii_lowercase().as_str() {
+        "claude-sonnet-4-6" | "claude-sonnet" | "sonnet" => {
+            Ok(Model::anthropic_claude_sonnet_4_6())
         }
+        "claude-opus-4-7" | "claude-opus" | "opus" => Ok(Model::anthropic_claude_opus_4_7()),
+        "gpt-4o" => Ok(Model::openai_gpt_4o()),
+        "gpt-4o-mini" => Ok(Model::openai_gpt_4o_mini()),
+        "gpt-5" => Ok(Model::openai_gpt_5()),
+        "gemini-2.0-flash" | "gemini" | "gemini-flash" => Ok(Model::gemini_2_0_flash()),
+        _ => anyhow::bail!("unknown or unsupported explicit model identifier: '{id}'"),
     }
-    if std::env::var("ANTHROPIC_API_KEY").is_ok() {
-        Model::anthropic_claude_sonnet_4_6()
+}
+
+pub fn default_model_from_env() -> anyhow::Result<Model> {
+    if let Ok(id) = std::env::var("PI_MODEL") {
+        return resolve_model(&id);
+    }
+    if std::env::var("GEMINI_API_KEY").is_ok() {
+        Ok(Model::gemini_2_0_flash())
+    } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+        Ok(Model::anthropic_claude_sonnet_4_6())
     } else if std::env::var("OPENAI_API_KEY").is_ok() {
-        Model::openai_gpt_4o_mini()
+        Ok(Model::openai_gpt_4o_mini())
     } else {
-        Model::anthropic_claude_sonnet_4_6()
+        Ok(Model::anthropic_claude_sonnet_4_6())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_model_gemini_and_known_models() {
+        assert_eq!(
+            resolve_model("gemini-2.0-flash").unwrap().provider,
+            "google"
+        );
+        assert_eq!(resolve_model("gemini").unwrap().provider, "google");
+        assert_eq!(resolve_model("sonnet").unwrap().provider, "anthropic");
+        assert_eq!(resolve_model("gpt-4o").unwrap().provider, "openai");
+    }
+
+    #[test]
+    fn test_resolve_model_unknown_errors() {
+        assert!(resolve_model("unknown-model-xyz").is_err());
     }
 }

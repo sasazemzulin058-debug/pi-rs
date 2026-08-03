@@ -174,11 +174,9 @@ async fn main() -> anyhow::Result<()> {
     let yolo = cli.yolo || file_cfg.yolo;
     let json = cli.json || file_cfg.json;
 
-    let app = AppConfig {
-        max_turns,
-        thinking_level,
-        ..AppConfig::default()
-    };
+    let mut app = AppConfig::new()?;
+    app.max_turns = max_turns;
+    app.thinking_level = thinking_level;
 
     if let Some(Cmd::Sessions { action }) = cli.cmd {
         return run_sessions_cmd(&app, action);
