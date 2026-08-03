@@ -313,7 +313,10 @@ impl Provider for OpenAiProvider {
                 }
                 let chunk: Chunk = match serde_json::from_str(&ev.data) {
                     Ok(c) => c,
-                    Err(_) => continue,
+                    Err(e) => {
+                        yield Err(Error::InvalidResponse(format!("malformed sse data: {e}")));
+                        return;
+                    }
                 };
                 if let Some(m) = chunk.model { response_model = Some(m); }
                 if let Some(u) = chunk.usage {
@@ -392,7 +395,16 @@ impl Provider for OpenAiProvider {
                 let args: Value = if tc.args.is_empty() {
                     Value::Object(Default::default())
                 } else {
-                    serde_json::from_str(&tc.args).unwrap_or(Value::Object(Default::default()))
+                    match serde_json::from_str(&tc.args) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            yield Err(Error::InvalidResponse(format!(
+                                "malformed tool call arguments for {}: {e}",
+                                tc.name
+                            )));
+                            return;
+                        }
+                    }
                 };
                 let block_index = text_index + i;
                 yield Ok(AssistantMessageEvent::ToolCallEnd {
