@@ -22,8 +22,20 @@ export default function (api: any) {
   faux.setResponses([
     fauxAssistantMessage("hello", { timestamp: 1000 }),
   ]);
-  api.registerProvider(faux.provider);
-  api.registerModel("faux", faux.getModel("faux-1"));
+  api.registerProvider("faux", {
+    name: "Faux Provider",
+    api: faux.api,
+    apiKey: "faux-test-key",
+    models: [{
+      id: "faux-1",
+      name: "Faux Model",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 10000,
+      maxTokens: 1000,
+    }],
+  });
 }
 """
     with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
@@ -67,8 +79,20 @@ export default function (api: any) {
     }),
     fauxAssistantMessage("file read completed", { timestamp: 2000 }),
   ]);
-  api.registerProvider(faux.provider);
-  api.registerModel("faux", faux.getModel("faux-1"));
+  api.registerProvider("faux", {
+    name: "Faux Provider",
+    api: faux.api,
+    apiKey: "faux-test-key",
+    models: [{
+      id: "faux-1",
+      name: "Faux Model",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 10000,
+      maxTokens: 1000,
+    }],
+  });
 }
 """
     with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
