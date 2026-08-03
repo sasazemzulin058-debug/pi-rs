@@ -174,7 +174,7 @@ async fn generate_invariant_actual_fixtures() {
         .map(|output| output.status.success())
         .unwrap_or(false);
     let extension_fallback = if node_available { "available" } else { "disabled" };
-    let core_agent_functional = model.id == "test-model";
+    let core_agent_functional = model.id == "test-model" && stream_cancelled && !events_emitted.is_empty();
     assert!(core_agent_functional);
     write_actual(
         "extension.node-absent",
