@@ -1,0 +1,40 @@
+name: termux
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: termux-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  termux:
+    name: authoritative-termux
+    runs-on: ${{ fromJSON(vars.TERMUX_RUNNER_LABELS) }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout exact triggering revision
+        uses: actions/checkout@11760c93482637271783149392128615266045d9 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        shell: sh
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+
+      - name: Run Termux verification
+        shell: sh
+        run: sh ./scripts/verify-termux
+
+      - name: Clean runner workspace
+        if: always()
+        shell: sh
+        run: |
+          find "${TMPDIR:?}" -mindepth 1 -maxdepth 1 \
+            -name 'pi-rs-verify.*' -exec rm -rf -- {} +

@@ -1,0 +1,61 @@
+#!/data/data/com.termux/files/usr/bin/sh
+set -eu
+
+fail() {
+    printf '%s\n' "verify-termux: $*" >&2
+    exit 1
+}
+
+[ "$(uname -o 2>/dev/null || true)" = Android ] || fail "this check must run on Android under Termux"
+[ -n "${PREFIX:-}" ] || fail "PREFIX is not set"
+case "$PREFIX" in
+    */com.termux/files/usr) ;;
+    *) fail "PREFIX does not identify a Termux installation: $PREFIX" ;;
+esac
+[ -d "$PREFIX" ] || fail "PREFIX is not a directory: $PREFIX"
+
+[ -n "${TMPDIR:-}" ] || fail "TMPDIR is not set"
+[ "$TMPDIR" != /tmp ] || fail "TMPDIR must be Termux storage, not /tmp"
+[ -d "$TMPDIR" ] || fail "TMPDIR is not a directory: $TMPDIR"
+[ -w "$TMPDIR" ] || fail "TMPDIR is not writable: $TMPDIR"
+
+resolve_shell() {
+    if [ -n "${SHELL:-}" ] && [ -x "$SHELL" ]; then
+        printf '%s\n' "$SHELL"
+        return
+    fi
+
+    path_shell=$(command -v sh 2>/dev/null || true)
+    if [ -n "$path_shell" ] && [ -x "$path_shell" ]; then
+        printf '%s\n' "$path_shell"
+        return
+    fi
+
+    if [ -x "$PREFIX/bin/sh" ]; then
+        printf '%s\n' "$PREFIX/bin/sh"
+        return
+    fi
+
+    return 1
+}
+
+selected_shell=$(resolve_shell) || fail "no executable shell found via SHELL, PATH, or PREFIX/bin/sh"
+"$selected_shell" -c 'exit 0' || fail "selected shell cannot execute commands: $selected_shell"
+
+workspace=$(mktemp -d "$TMPDIR/pi-rs-verify.XXXXXXXX") || fail "could not create workspace beneath TMPDIR"
+cleanup() {
+    rm -rf -- "$workspace"
+}
+trap cleanup EXIT HUP INT TERM
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+printf '%s\n' "verify-termux: shell=$selected_shell"
+printf '%s\n' "verify-termux: workspace=$workspace"
+printf '%s\n' "verify-termux: repository=$repo_root"
+
+cd "$repo_root"
+cargo test --locked --workspace
+python3 -m unittest discover -s tests/contract -p 'test_*.py'
+./scripts/validate-fixture-manifest --milestone M1a
+./scripts/generate-pi-rs-fixtures --milestone M1a --actual "$workspace/actual"
+./scripts/compare-contract-fixtures --milestone M1a --actual "$workspace/actual"
