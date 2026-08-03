@@ -12,7 +12,7 @@ from contract_fixture_lib import normalize_structure
 
 def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
     """Capture case cli.print.basic using upstream Pi CLI print mode and temporary faux provider extension."""
-    extension_code = """import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/providers/faux";
+    extension_code = """import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 
 export default function (api: any) {
   const faux = registerFauxProvider({
@@ -53,7 +53,7 @@ export default function (api: any) {
 
 def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
     """Capture case agent.serial-tool-loop using temporary faux provider extension with tool calls."""
-    extension_code = """import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/providers/faux";
+    extension_code = """import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
 
 export default function (api: any) {
   const faux = registerFauxProvider({
