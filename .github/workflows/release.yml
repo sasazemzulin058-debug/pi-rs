@@ -5,27 +5,45 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
+  validate:
+    name: validate release version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11760c93482637271783149392128615266045d9 # v4.2.2
+      - name: Run version validation script
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ "$GITHUB_REF" = "$TAG" ]; then
+            ./scripts/check-release-version
+          else
+            ./scripts/check-release-version "$TAG"
+          fi
+
   build:
     name: build (${{ matrix.target }})
+    needs: validate
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-latest,  target: aarch64-apple-darwin }
-          - { os: macos-latest,  target: x86_64-apple-darwin }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu }
+          - {os: macos-latest, target: aarch64-apple-darwin}
+          - {os: macos-latest, target: x86_64-apple-darwin}
+          - {os: ubuntu-latest, target: x86_64-unknown-linux-gnu}
+          - {os: ubuntu-latest, target: aarch64-unknown-linux-gnu}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11760c93482637271783149392128615266045d9 # v4.2.2
+      - uses: dtolnay/rust-toolchain@c59d99787e9cf2efbcfedfa45100067b5e40e69d # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@f0deed1e0edfc266b0575d7e3e42550db4bb6882 # v2.7.7
       - name: install cross-compilers (linux aarch64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -33,12 +51,15 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
       - name: build release
-        run: cargo build --release --target ${{ matrix.target }} -p pi-coding-agent
+        run: cargo build --locked --release --target ${{ matrix.target }} -p pi-coding-agent
       - name: package
+        run: ./scripts/package-release ${{ matrix.target }} dist
+      - name: Smoke test binary (native target)
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'x86_64-apple-darwin' || matrix.target == 'aarch64-apple-darwin'
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/pi-rs dist/pi-rs-${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+          ./dist/pi-rs-${{ matrix.target }} --version
+          ./dist/pi-rs-${{ matrix.target }} --help
+      - uses: actions/upload-artifact@4bec3a0f5a706173474b119cb4e068fc2cd1d6bf # v4.6.1
         with:
           name: pi-rs-${{ matrix.target }}
           path: dist/pi-rs-${{ matrix.target }}
@@ -47,12 +68,23 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11760c93482637271783149392128615266045d9 # v4.2.2
+      - uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum pi-rs-* > SHA256SUMS
+      - name: Verify release artifacts checksums
+        run: ./scripts/verify-release-artifacts dist
+      - uses: softprops/action-gh-release@c95fe0f22b73ab19187909d02d5a9d20c57173e6 # v2.2.1
         with:
-          files: dist/pi-rs-*
+          files: |
+            dist/pi-rs-*
+            dist/SHA256SUMS
           generate_release_notes: true

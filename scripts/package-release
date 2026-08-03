@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Scripts/package-release
+# Helper script to package and prepare release artifacts for pi-rs.
+
+TARGET="${1:-x86_64-unknown-linux-gnu}"
+DIST_DIR="${2:-dist}"
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_PATH="$ROOT_DIR/target/$TARGET/release/pi-rs"
+
+if [ ! -f "$BIN_PATH" ]; then
+    echo "Error: Binary not found at $BIN_PATH"
+    exit 1
+fi
+
+mkdir -p "$DIST_DIR"
+DEST_PATH="$DIST_DIR/pi-rs-$TARGET"
+cp "$BIN_PATH" "$DEST_PATH"
+echo "Packaged $BIN_PATH -> $DEST_PATH"

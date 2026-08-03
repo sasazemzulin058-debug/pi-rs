@@ -195,8 +195,11 @@ async fn bash_runs_simple_command() {
 async fn bash_persists_cwd_across_calls() {
     let tool: Arc<bash::BashTool> = Arc::new(bash::BashTool::new());
 
+    let temp = std::env::temp_dir();
+    let temp_str = temp.to_string_lossy();
+
     let res = tool
-        .execute("1", json!({"command": "cd /tmp"}))
+        .execute("1", json!({"command": format!("cd {}", temp_str)}))
         .await
         .unwrap();
     let text = res.content[0].as_text().unwrap();
@@ -204,5 +207,31 @@ async fn bash_persists_cwd_across_calls() {
 
     let res = tool.execute("2", json!({"command": "pwd"})).await.unwrap();
     let text = res.content[0].as_text().unwrap();
-    assert!(text.contains("/tmp"), "got: {text}");
+    let canonical_temp = temp.canonicalize().unwrap_or(temp.clone());
+    let canonical_temp_str = canonical_temp.to_string_lossy();
+    assert!(
+        text.contains(temp_str.as_ref()) || text.contains(canonical_temp_str.as_ref()),
+        "got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn bash_cancellation_sends_sigterm_before_sigkill() {
+    let tool = bash::BashTool::new();
+    let start = std::time::Instant::now();
+    // Trap SIGTERM in subshell, sleep 1 sec, then exit
+    let cmd = "trap 'echo term_received; exit 0' TERM; sleep 10";
+    let res = tool
+        .execute("1", json!({"command": cmd, "timeout_ms": 200}))
+        .await;
+    let elapsed = start.elapsed();
+    assert!(res.is_err(), "expected timeout error");
+    let err = res.unwrap_err();
+    assert!(err.contains("timed out"), "unexpected error string: {err}");
+    // Should terminate gracefully via SIGTERM within < 5s (well before 5s SIGKILL timeout)
+    assert!(
+        elapsed.as_millis() < 4000,
+        "cancellation took too long: {}ms",
+        elapsed.as_millis()
+    );
 }
