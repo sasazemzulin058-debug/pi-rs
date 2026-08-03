@@ -93,9 +93,9 @@ fn session_rejects_symlink_directory_and_files() {
     // Test 2: Reject if individual session file is a symlink
     let sessions_real_dir = session::sessions_dir(&config_dir);
     std::fs::create_dir_all(&sessions_real_dir).unwrap();
-    let outside_file = target_dir.join("outside.json");
+    let outside_file = target_dir.join("outside.jsonl");
     std::fs::write(&outside_file, "{}").unwrap();
-    let symlink_file = sessions_real_dir.join("session-symlink.json");
+    let symlink_file = sessions_real_dir.join("session-symlink.jsonl");
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&outside_file, &symlink_file).unwrap();

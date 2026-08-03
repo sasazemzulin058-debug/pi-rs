@@ -239,8 +239,7 @@ fn run_sessions_cmd(app: &AppConfig, action: SessionAction) -> anyhow::Result<()
             Ok(())
         }
         SessionAction::Delete { id } => {
-            let path = session::session_file_path(&app.config_dir, &id)?;
-            std::fs::remove_file(&path)?;
+            let path = session::delete(&app.config_dir, &id)?;
             eprintln!("deleted {}", path.display());
             Ok(())
         }

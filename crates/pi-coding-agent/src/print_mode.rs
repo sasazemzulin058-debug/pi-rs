@@ -45,11 +45,15 @@ pub async fn run_print(
     }
 
     let res = handle.await??;
+    let mut session = crate::session::Session::new(&app.model);
+    session.replace_messages(res.messages.clone());
+    let _ = crate::session::save(&app.config_dir, &session);
     if json_mode {
         emit_json(&json!({
             "type": "agent_end",
             "stopped_at_turn_limit": res.stopped_at_turn_limit,
             "message_count": res.messages.len(),
+            "session_id": session.id,
         }));
     } else if res.stopped_at_turn_limit {
         eprintln!("(stopped at max turns)");

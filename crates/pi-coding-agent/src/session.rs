@@ -116,48 +116,54 @@ pub fn session_file_path(config_dir: &Path, id: &str) -> anyhow::Result<PathBuf>
     Ok(path)
 }
 
-pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
-    let clean_id = validate_session_id(&session.id)?;
+pub fn session_file_path_jsonl(config_dir: &Path, id: &str) -> anyhow::Result<PathBuf> {
+    let clean_id = validate_session_id(id)?;
     let dir = sessions_dir(config_dir);
     check_sessions_dir_not_symlink(&dir)?;
-    std::fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
-    check_sessions_dir_not_symlink(&dir)?;
 
-    let path = dir.join(format!("{clean_id}.json"));
+    let path = dir.join(format!("{clean_id}.jsonl"));
+
     if let Ok(meta) = std::fs::symlink_metadata(&path) {
         if meta.file_type().is_symlink() {
             anyhow::bail!("session file is a symlink: {}", path.display());
         }
     }
 
-    let tmp_path = dir.join(format!("{clean_id}.json.tmp.{}", rand_u32()));
-    if let Ok(meta) = std::fs::symlink_metadata(&tmp_path) {
-        if meta.file_type().is_symlink() {
-            anyhow::bail!("temp session file is a symlink: {}", tmp_path.display());
+    if let (Ok(canonical_dir), Ok(canonical_path)) = (dir.canonicalize(), path.canonicalize()) {
+        if !canonical_path.starts_with(&canonical_dir) {
+            anyhow::bail!("session path escapes session directory");
         }
-    }
-
-    let json = serde_json::to_string_pretty(session)?;
-
-    // ponytail: atomic rename provides crash-safety on POSIX/same filesystem; upgrade to lockfile or cross-dev fallback if needed.
-    if let Err(e) = std::fs::write(&tmp_path, json) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(e).with_context(|| format!("write {}", tmp_path.display()));
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, &path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(e)
-            .with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()));
     }
     Ok(path)
 }
 
+pub fn save(config_dir: &Path, session: &Session) -> anyhow::Result<PathBuf> {
+    let path = session_file_path_jsonl(config_dir, &session.id)?;
+    save_jsonl(&path, session)?;
+    Ok(path)
+}
+
 pub fn load(config_dir: &Path, id: &str) -> anyhow::Result<Session> {
-    let path = session_file_path(config_dir, id)?;
-    let text =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let jsonl_path = session_file_path_jsonl(config_dir, id)?;
+    if jsonl_path.exists() {
+        return load_jsonl(&jsonl_path);
+    }
+    let legacy_path = session_file_path(config_dir, id)?;
+    let text = std::fs::read_to_string(&legacy_path)
+        .with_context(|| format!("read {}", legacy_path.display()))?;
     let s: Session = serde_json::from_str(&text)?;
     Ok(s)
+}
+
+pub fn delete(config_dir: &Path, id: &str) -> anyhow::Result<PathBuf> {
+    let jsonl_path = session_file_path_jsonl(config_dir, id)?;
+    if jsonl_path.exists() {
+        std::fs::remove_file(&jsonl_path)?;
+        return Ok(jsonl_path);
+    }
+    let legacy_path = session_file_path(config_dir, id)?;
+    std::fs::remove_file(&legacy_path)?;
+    Ok(legacy_path)
 }
 
 pub fn save_jsonl(path: &Path, session: &Session) -> anyhow::Result<()> {
@@ -561,7 +567,8 @@ pub fn list(config_dir: &Path) -> anyhow::Result<Vec<SessionSummary>> {
     for entry in std::fs::read_dir(&dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+        let ext = path.extension().and_then(|s| s.to_str());
+        if ext != Some("json") && ext != Some("jsonl") {
             continue;
         }
         if let Ok(meta) = std::fs::symlink_metadata(&path) {
@@ -576,10 +583,17 @@ pub fn list(config_dir: &Path) -> anyhow::Result<Vec<SessionSummary>> {
         if validate_session_id(stem).is_err() {
             continue;
         }
-        let text = std::fs::read_to_string(&path)?;
-        let s: Session = match serde_json::from_str(&text) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let s = if ext == Some("jsonl") {
+            match load_jsonl(&path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            }
+        } else {
+            let text = std::fs::read_to_string(&path)?;
+            match serde_json::from_str::<Session>(&text) {
+                Ok(s) => s,
+                Err(_) => continue,
+            }
         };
         let first_user = s
             .messages
