@@ -16,12 +16,13 @@ def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
     res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
-    raw = {
+    raw: Dict[str, Any] = {
         "exit_code": res.returncode,
         "stdout": res.stdout,
         "stderr": res.stderr
     }
-    return normalize_structure(raw)
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
 
 def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
     """Capture case agent.serial-tool-loop using scripted provider or print mode with tool calls."""
@@ -30,46 +31,61 @@ def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
     res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
-    raw = {
+    raw: Dict[str, Any] = {
         "exit_code": res.returncode,
         "stdout": res.stdout,
         "stderr": res.stderr
     }
-    return normalize_structure(raw)
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
 
 def capture_provider_openai_chat_fragmented_sse(upstream_root: str) -> Dict[str, Any]:
     """Capture case provider.openai-chat.fragmented-sse offline structure."""
-    raw = {
+    raw: Dict[str, Any] = {
         "chunks": ["data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n", "data: [DONE]\n\n"],
         "expected_events": ["Start", "TextStart", "TextDelta(hello)", "TextEnd", "Done"]
     }
-    return normalize_structure(raw)
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
 
 def capture_tool_bash_cancel_descendants(upstream_root: str) -> Dict[str, Any]:
     """Capture case tool.bash.cancel-descendants offline structure."""
-    raw = {
+    raw: Dict[str, Any] = {
         "command": "sleep 10",
         "signal": "SIGTERM",
         "cancelled": True,
         "descendants_reaped": True
     }
-    return normalize_structure(raw)
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
 
 def capture_resource_context_precedence(upstream_root: str) -> Dict[str, Any]:
     """Capture case resource.context-precedence offline structure."""
-    raw = {
+    raw: Dict[str, Any] = {
         "precedence": ["child/AGENTS.md", "root/AGENTS.md", "root/CLAUDE.md"],
         "merged": True
     }
-    return normalize_structure(raw)
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
 
 def capture_resource_untrusted_project(upstream_root: str) -> Dict[str, Any]:
     """Capture case resource.untrusted-project offline structure."""
-    raw = {
+    raw: Dict[str, Any] = {
         "trust_decision": "Untrusted",
         "project_resources_loaded": False
     }
-    return normalize_structure(raw)
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
+
+def capture_tool_read_bounds(upstream_root: str) -> Dict[str, Any]:
+    """Capture case tool.read.bounds offline structure fallback."""
+    raw: Dict[str, Any] = {
+        "offset_1_indexed": True,
+        "default_limit": 2000,
+        "read_bytes_limit": 51200
+    }
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
 
 ADAPTERS = {
     "cli.print.basic": capture_cli_print_basic,

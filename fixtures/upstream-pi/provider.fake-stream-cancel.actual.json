@@ -1,0 +1,10 @@
+{
+  "events": [
+    "Start",
+    "TextStart",
+    "TextDelta(hello)",
+    "Cancelled"
+  ],
+  "socket_opened": false,
+  "stream_terminated": true
+}
