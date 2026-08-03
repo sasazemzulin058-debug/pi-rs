@@ -209,7 +209,90 @@ process.exitCode = await runPrintMode(runtimeHost, { mode: "json", initialMessag
 
 
 def capture_agent_retry_auto_compaction(upstream_root: str) -> dict[str, Any]:
-    return _unsupported_capture("agent.retry-auto-compaction", upstream_root)
+    """Capture overflow recovery through the pinned AgentSession prompt path."""
+    loader = _get_tsx_import_arg(upstream_root)
+    if loader == "tsx/esm":
+        raise RuntimeError(
+            f"agent.retry-auto-compaction: pinned tsx loader not found under {upstream_root}"
+        )
+    with tempfile.TemporaryDirectory(prefix="pi-retry-capture-") as temp:
+        root = Path(temp).resolve()
+        agent_dir = root / "agent-dir"
+        agent_dir.mkdir()
+        runner = r"""import { createAssistantMessageEventStream } from "__UPSTREAM__/node_modules/@earendil-works/pi-ai/dist/index.js";
+import { AuthStorage } from "__UPSTREAM__/packages/coding-agent/src/core/auth-storage.ts";
+import { ModelRuntime } from "__UPSTREAM__/packages/coding-agent/src/core/model-runtime.ts";
+import { SessionManager } from "__UPSTREAM__/packages/coding-agent/src/core/session-manager.ts";
+import { createAgentSessionRuntime, createAgentSessionServices, createAgentSessionFromServices } from "__UPSTREAM__/packages/coding-agent/src/core/agent-session-runtime.ts";
+const cwd = process.cwd(), agentDir = __AGENT_DIR__;
+const model = { id:"capture-model", name:"Capture Model", api:"anthropic-messages", provider:"capture", baseUrl:"http://127.0.0.1:1", reasoning:false, input:["text"], cost:{input:0,output:0,cacheRead:0,cacheWrite:0}, contextWindow:4096, maxTokens:128 };
+const usage = {input:1,output:1,cacheRead:0,cacheWrite:0,totalTokens:2,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}};
+const message = (text, stopReason="stop") => ({role:"assistant",content:[{type:"text",text}],api:model.api,provider:model.provider,model:model.id,usage,stopReason,timestamp:0});
+const stream = (messageValue, error=false) => { const s=createAssistantMessageEventStream(); queueMicrotask(()=>{ if(error) s.push({type:"error",reason:"error",error:messageValue}); else s.push({type:"done",reason:"stop",message:messageValue}); }); return s; };
+const manager=SessionManager.inMemory();
+const calls=[];
+const runtime=await ModelRuntime.create({credentials:AuthStorage.inMemory({capture:{type:"api_key",key:"capture-key"}}),modelsPath:null,allowModelNetwork:false});
+ runtime.registerProvider(model.provider,{baseUrl:model.baseUrl,api:model.api});
+const make = async ({sessionManager, sessionStartEvent, cwd, agentDir}) => {
+  const services = await createAgentSessionServices({cwd, agentDir, modelRuntime:runtime});
+  const result = await createAgentSessionFromServices({services, sessionManager, model, sessionStartEvent});
+  result.session.agent.streamFunction=(...args)=>{
+    const n=calls.length;
+    calls.push({index:n,args});
+    if(n===0) return stream({...message("", "error"),errorMessage:"context_length_exceeded",usage},true);
+    if(n===1) return stream(message("fixed compaction summary"));
+    if(n===2) return stream(message("fixed retry success"));
+    throw new Error("unexpected stream call");
+  };
+  return {...result, services, diagnostics: services.diagnostics};
+};
+const runtimeHost = await createAgentSessionRuntime(make, {cwd, agentDir, sessionManager:manager});
+const session=runtimeHost.session;
+runtimeHost.services.settingsManager.applyOverrides({compaction:{enabled:true,keepRecentTokens:1}});
+for (let i=0; i<30; i++) {
+  session.sessionManager.appendMessage({role:"user",content:`old compacted message ${i} with very long deterministic padding text to ensure high token count exceeding keepRecentTokens threshold completely`,timestamp:0});
+  session.sessionManager.appendMessage({role:"assistant",content:[{type:"text",text:`old response ${i} with very long deterministic padding text to ensure high token count exceeding keepRecentTokens threshold completely`}],api:model.api,provider:model.provider,model:model.id,usage:{...usage,totalTokens:500},stopReason:"stop",timestamp:0});
+}
+session.sessionManager.appendMessage({role:"assistant",content:[{type:"text",text:"old answer"}],api:model.api,provider:model.provider,model:model.id,usage:{...usage,totalTokens:500},stopReason:"stop",timestamp:0});
+const events=[]; session.subscribe(event=>events.push({type:event.type,reason:event.reason,willRetry:event.willRetry,aborted:event.aborted,message:event.message}));
+await session.prompt("new prompt",{expandPromptTemplates:false});
+const finalMessage=[...session.agent.state.messages].reverse().find(m=>m.role==="assistant");
+const ordered=events.map(e=>e.type+":"+(e.reason||""));
+const retryText=JSON.stringify(calls[2]?.args||[]);
+const compactionStart=ordered.indexOf("compaction_start:overflow");
+const compactionEnd=ordered.indexOf("compaction_end:overflow");
+const finalStart=ordered.lastIndexOf("message_start:");
+const finalEnd=ordered.lastIndexOf("message_end:");
+if(calls.length!==3 || calls.map(c=>c.index).join(",")!=="0,1,2" || compactionStart<0 || compactionEnd<=compactionStart || !events[compactionEnd].willRetry || events[compactionEnd].aborted || finalStart<=compactionEnd || finalEnd<=finalStart || !session.sessionManager.getBranch().some(m=>m.type==="compaction" && m.summary.includes("fixed compaction summary")) || !retryText.includes("new prompt") || !retryText.includes("fixed compaction summary") || retryText.includes("context_length_exceeded") || retryText.includes("old compacted message 0") || !finalMessage || finalMessage.content?.[0]?.text!=="fixed retry success") throw new Error(JSON.stringify({calls:calls.map(c=>c.index),ordered,retryText,final:finalMessage?.content?.[0]?.text,branch:session.sessionManager.getBranch().map(e=>e.type),events}));
+console.log(JSON.stringify({calls:calls.map(c=>({index:c.index,context:c.args})),events,final:finalMessage.content?.[0]?.text,retryContext:retryText}));
+"""
+        path = root / "runner.mts"
+        path.write_text(
+            runner.replace("__UPSTREAM__", str(Path(upstream_root).resolve())).replace(
+                "__AGENT_DIR__", json.dumps(str(agent_dir))
+            ),
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            ["node", "--import", loader, str(path)],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+        )
+        records = _parse_strict_jsonl(res.stdout, res.stderr, res.returncode)
+    if len(records) != 1 or set(records[0]) != {
+        "calls",
+        "events",
+        "final",
+        "retryContext",
+    }:
+        raise RuntimeError("agent.retry-auto-compaction: invalid runner protocol")
+    record = records[0]
+    if [c["index"] for c in record["calls"]] != [0, 1, 2] or record[
+        "final"
+    ] != "fixed retry success":
+        raise RuntimeError("agent.retry-auto-compaction: retry assertions failed")
+    return cast(dict[str, Any], _normalize_capture(record, str(root), upstream_root))
 
 
 def capture_tool_grep_find_ls(upstream_root: str) -> dict[str, Any]:
