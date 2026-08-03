@@ -72,3 +72,43 @@ jobs:
         run: >-
           cargo audit --ignore RUSTSEC-2026-0204 --ignore RUSTSEC-2026-0185
           --ignore RUSTSEC-2026-0190
+
+  contract-comparator-gate:
+    name: contract-comparator-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run Python contract tests
+        run: |
+          python3 -m unittest discover -s tests/contract -p "test_*.py"
+      - name: Validate fixture manifest (M0 validation)
+        run: |
+          python3 scripts/validate-fixture-manifest
+      - name: Run comparator self-tests
+        run: |
+          python3 scripts/compare-contract-fixtures --self-test
+
+  docs-check:
+    name: docs-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+      - name: Build book
+        run: mdbook build docs
+
+  ci-required:
+    name: ci-required
+    needs: [test, supply-chain, contract-comparator-gate, docs-check]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate required status
+        run: echo "All required CI jobs completed successfully."
+
