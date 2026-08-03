@@ -3,6 +3,7 @@ use pi_ai::{
     now_ms, AssistantMessage, AssistantMessageEvent, Content, FakeProviderFactory, Message, Model,
     ProviderFactory, StopReason, StreamOptions, Usage,
 };
+use pi_agent::{run_agent_with_history, AgentConfig};
 use std::fs;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
@@ -174,7 +175,28 @@ async fn generate_invariant_actual_fixtures() {
         .map(|output| output.status.success())
         .unwrap_or(false);
     let extension_fallback = if node_available { "available" } else { "disabled" };
-    let core_agent_functional = model.id == "test-model" && stream_cancelled && !events_emitted.is_empty();
+    let core_config = AgentConfig::new(model.clone(), "test").with_max_turns(1).with_provider_factory(
+        std::sync::Arc::new(FakeProviderFactory::new(vec![AssistantMessageEvent::Done {
+            reason: StopReason::Stop,
+            message: AssistantMessage {
+                content: vec![Content::Text { text: "ok".into() }],
+                api: "openai-completions".into(),
+                provider: "test-provider".into(),
+                model: "test-model".into(),
+                usage: Usage::default(),
+                stop_reason: StopReason::Stop,
+                error_message: None,
+                timestamp: now_ms(),
+            },
+        }])) ,
+    );
+    let core_agent_functional = run_agent_with_history(
+        &core_config,
+        vec![Message::user_text("ping")],
+        None,
+    )
+    .await
+    .is_ok();
     assert!(core_agent_functional);
     write_actual(
         "extension.node-absent",
