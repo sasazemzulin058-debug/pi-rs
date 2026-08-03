@@ -54,19 +54,36 @@ pub fn resolve_model(id: &str) -> anyhow::Result<Model> {
     }
 }
 
-pub fn default_model_from_env() -> anyhow::Result<Model> {
-    if let Ok(id) = std::env::var("PI_MODEL") {
-        return resolve_model(&id);
+fn select_default_model(
+    explicit_model: Option<&str>,
+    has_google_key: bool,
+    has_gemini_key: bool,
+    has_anthropic_key: bool,
+    has_openai_key: bool,
+) -> anyhow::Result<Model> {
+    if let Some(id) = explicit_model {
+        return resolve_model(id);
     }
-    if std::env::var("GEMINI_API_KEY").is_ok() {
+    if has_google_key || has_gemini_key {
         Ok(Model::gemini_2_0_flash())
-    } else if std::env::var("ANTHROPIC_API_KEY").is_ok() {
+    } else if has_anthropic_key {
         Ok(Model::anthropic_claude_sonnet_4_6())
-    } else if std::env::var("OPENAI_API_KEY").is_ok() {
+    } else if has_openai_key {
         Ok(Model::openai_gpt_4o_mini())
     } else {
         Ok(Model::anthropic_claude_sonnet_4_6())
     }
+}
+
+pub fn default_model_from_env() -> anyhow::Result<Model> {
+    let explicit_model = std::env::var("PI_MODEL").ok();
+    select_default_model(
+        explicit_model.as_deref(),
+        std::env::var_os("GOOGLE_API_KEY").is_some(),
+        std::env::var_os("GEMINI_API_KEY").is_some(),
+        std::env::var_os("ANTHROPIC_API_KEY").is_some(),
+        std::env::var_os("OPENAI_API_KEY").is_some(),
+    )
 }
 
 #[cfg(test)]
@@ -87,5 +104,29 @@ mod tests {
     #[test]
     fn test_resolve_model_unknown_errors() {
         assert!(resolve_model("unknown-model-xyz").is_err());
+    }
+
+    #[test]
+    fn test_google_and_gemini_keys_select_gemini() {
+        assert_eq!(
+            select_default_model(None, true, false, true, true)
+                .unwrap()
+                .provider,
+            "google"
+        );
+        assert_eq!(
+            select_default_model(None, false, true, true, true)
+                .unwrap()
+                .provider,
+            "google"
+        );
+    }
+
+    #[test]
+    fn test_explicit_model_never_silently_falls_back() {
+        let selected = select_default_model(Some("gpt-4o"), true, true, true, true).unwrap();
+        assert_eq!(selected.provider, "openai");
+
+        assert!(select_default_model(Some("unknown-model-xyz"), true, true, true, true).is_err());
     }
 }

@@ -12,6 +12,49 @@ use pi_ai::providers::Provider;
 use pi_ai::{AssistantMessageEvent, Content, Context, Message, Model, StopReason, StreamOptions};
 use serde_json::json;
 
+async fn stream_error_for_body(body: String) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server_handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = stream.read(&mut buf).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        stream.write_all(body.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    });
+
+    let base_url = format!("http://127.0.0.1:{port}");
+    let model = Model::openai_compat("openai", "gpt-4o", base_url.clone(), 128_000, 4096);
+    let context = Context {
+        system_prompt: None,
+        messages: vec![Message::user_text("test")],
+        tools: vec![],
+    };
+    let options = StreamOptions {
+        api_key: Some("test-key".into()),
+        base_url: Some(base_url),
+        ..Default::default()
+    };
+    let mut events = OpenAiProvider::new()
+        .stream(&model, &context, &options)
+        .await
+        .unwrap();
+    let mut error = None;
+    while let Some(event) = events.next().await {
+        if let Err(err) = event {
+            error = Some(err.to_string());
+            break;
+        }
+    }
+    server_handle.join().unwrap();
+    error.expect("stream should fail closed")
+}
+
 #[tokio::test]
 async fn test_openai_sse_fragmented_loopback() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -227,6 +270,41 @@ data: [DONE]\n\n"
         }
     } else {
         panic!("Last event was not Done");
+    }
+}
+
+#[tokio::test]
+async fn test_openai_sse_requires_done_marker() {
+    let chunk = json!({
+        "choices": [{"delta": {"content": "partial"}, "finish_reason": "stop"}]
+    });
+    let error = stream_error_for_body(format!("data: {chunk}\n\n")).await;
+    assert!(error.contains("before [DONE]"), "unexpected error: {error}");
+}
+
+#[tokio::test]
+async fn test_openai_sse_rejects_incomplete_tool_calls() {
+    for (id, name, arguments) in [
+        ("", "calculator", "{}"),
+        ("call_1", "", "{}"),
+        ("call_1", "calculator", ""),
+    ] {
+        let chunk = json!({
+            "choices": [{
+                "delta": {"tool_calls": [{
+                    "index": 0,
+                    "id": id,
+                    "function": {"name": name, "arguments": arguments}
+                }]},
+                "finish_reason": "tool_calls"
+            }]
+        });
+        let error = stream_error_for_body(format!("data: {chunk}\n\ndata: [DONE]\n\n")).await;
+        assert!(
+            error.contains("missing an id or function name")
+                || error.contains("empty tool call arguments"),
+            "unexpected error: {error}"
+        );
     }
 }
 

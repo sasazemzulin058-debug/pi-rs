@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use pi_agent::{run_agent, AgentConfig, RuntimeLimits};
+use pi_agent::{run_agent, run_agent_with_history, AgentConfig, RuntimeLimits};
 use pi_ai::{
     now_ms, AssistantMessage, AssistantMessageEvent, Content, FakeProviderFactory, Message, Model,
     ProviderFactory, StopReason, Usage,
@@ -194,4 +194,164 @@ async fn test_agent_loop_tool_execution() {
     if test_dir.exists() {
         let _ = std::fs::remove_dir_all(&test_dir);
     }
+}
+
+#[tokio::test]
+async fn allow_session_persists_across_history_runs_with_same_policy() {
+    use async_trait::async_trait;
+    use pi_agent::{AgentTool, AgentToolResult, PermissionDecision, PermissionPolicy};
+    use serde_json::Value;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct RestrictedTool;
+
+    #[async_trait]
+    impl AgentTool for RestrictedTool {
+        fn name(&self) -> &str {
+            "restricted"
+        }
+
+        fn description(&self) -> &str {
+            "restricted test tool"
+        }
+
+        fn parameters(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn requires_permission(&self) -> bool {
+            true
+        }
+
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _args: Value,
+        ) -> Result<AgentToolResult, String> {
+            Ok(AgentToolResult::text("executed"))
+        }
+    }
+
+    struct CountingSessionPolicy(AtomicUsize);
+
+    #[async_trait]
+    impl PermissionPolicy for CountingSessionPolicy {
+        async fn check(&self, _tool_name: &str, _args: &Value) -> PermissionDecision {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            PermissionDecision::AllowSession
+        }
+    }
+
+    let tool_call = AssistantMessageEvent::Done {
+        reason: StopReason::ToolUse,
+        message: test_assistant_message(
+            vec![Content::ToolCall {
+                id: "call_1".into(),
+                name: "restricted".into(),
+                arguments: serde_json::json!({}),
+            }],
+            StopReason::ToolUse,
+        ),
+    };
+    let policy = Arc::new(CountingSessionPolicy(AtomicUsize::new(0)));
+    let cfg = AgentConfig::new(test_model(), "system")
+        .with_provider_factory(Arc::new(FakeProviderFactory::new(vec![tool_call])))
+        .with_tools(vec![Arc::new(RestrictedTool)])
+        .with_permission(policy.clone())
+        .with_max_turns(1);
+
+    let first = run_agent(&cfg, Message::user_text("first"), None)
+        .await
+        .unwrap();
+    let mut history = first.messages;
+    history.push(Message::user_text("second"));
+    let second = run_agent_with_history(&cfg, history, None).await.unwrap();
+
+    assert_eq!(policy.0.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        second
+            .messages
+            .iter()
+            .filter(|message| matches!(message, Message::ToolResult(result) if !result.is_error))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn allow_session_does_not_leak_to_different_policy() {
+    use async_trait::async_trait;
+    use pi_agent::{AgentTool, AgentToolResult, PermissionDecision, PermissionPolicy};
+    use serde_json::Value;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct RestrictedTool;
+
+    #[async_trait]
+    impl AgentTool for RestrictedTool {
+        fn name(&self) -> &str {
+            "restricted"
+        }
+        fn description(&self) -> &str {
+            "restricted test tool"
+        }
+        fn parameters(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn requires_permission(&self) -> bool {
+            true
+        }
+        async fn execute(&self, _id: &str, _args: Value) -> Result<AgentToolResult, String> {
+            Ok(AgentToolResult::text("executed"))
+        }
+    }
+
+    struct CountingSessionPolicy(AtomicUsize);
+
+    #[async_trait]
+    impl PermissionPolicy for CountingSessionPolicy {
+        async fn check(&self, _tool_name: &str, _args: &Value) -> PermissionDecision {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            PermissionDecision::AllowSession
+        }
+    }
+
+    let event = || AssistantMessageEvent::Done {
+        reason: StopReason::ToolUse,
+        message: test_assistant_message(
+            vec![Content::ToolCall {
+                id: "call_1".into(),
+                name: "restricted".into(),
+                arguments: serde_json::json!({}),
+            }],
+            StopReason::ToolUse,
+        ),
+    };
+    let first_policy = Arc::new(CountingSessionPolicy(AtomicUsize::new(0)));
+    let second_policy = Arc::new(CountingSessionPolicy(AtomicUsize::new(0)));
+    let make_config = |policy: Arc<CountingSessionPolicy>| {
+        AgentConfig::new(test_model(), "system")
+            .with_provider_factory(Arc::new(FakeProviderFactory::new(vec![event()])))
+            .with_tools(vec![Arc::new(RestrictedTool)])
+            .with_permission(policy)
+            .with_max_turns(1)
+    };
+
+    run_agent(
+        &make_config(first_policy.clone()),
+        Message::user_text("first"),
+        None,
+    )
+    .await
+    .unwrap();
+    run_agent(
+        &make_config(second_policy.clone()),
+        Message::user_text("second"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(first_policy.0.load(Ordering::SeqCst), 1);
+    assert_eq!(second_policy.0.load(Ordering::SeqCst), 1);
 }
