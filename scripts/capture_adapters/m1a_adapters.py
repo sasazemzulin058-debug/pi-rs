@@ -11,33 +11,92 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from contract_fixture_lib import normalize_structure
 
 def capture_cli_print_basic(upstream_root: str) -> Dict[str, Any]:
-    """Capture case cli.print.basic using upstream Pi CLI print mode."""
-    cmd = ["node", "--import", "tsx/esm", "packages/coding-agent/src/cli.ts", "--print", "hello"]
-    res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
-    raw: Dict[str, Any] = {
-        "exit_code": res.returncode,
-        "stdout": res.stdout,
-        "stderr": res.stderr
-    }
-    val = normalize_structure(raw)
-    return val if isinstance(val, dict) else {"result": val}
+    """Capture case cli.print.basic using upstream Pi CLI print mode and temporary faux provider extension."""
+    extension_code = """import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+
+export default function (api: any) {
+  const faux = registerFauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", name: "Faux Model" }],
+  });
+  faux.setResponses([
+    fauxAssistantMessage("hello", { timestamp: 1000 }),
+  ]);
+  api.registerProvider(faux.provider);
+  api.registerModel("faux", faux.getModel("faux-1"));
+}
+"""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ext_path = str(Path(tmp_dir) / "extension.ts")
+        with open(ext_path, "w", encoding="utf-8") as f:
+            f.write(extension_code)
+
+        cli_ts = str(Path(upstream_root) / "packages" / "coding-agent" / "src" / "cli.ts")
+        cmd = [
+            "node", "--import", "tsx/esm",
+            cli_ts,
+            "--extension", ext_path,
+            "--provider", "faux",
+            "--model", "faux-1",
+            "--print", "hello"
+        ]
+        res = subprocess.run(cmd, cwd=tmp_dir, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
+        raw: Dict[str, Any] = {
+            "exit_code": res.returncode,
+            "stdout": res.stdout,
+            "stderr": res.stderr
+        }
+        val = normalize_structure(raw)
+        return val if isinstance(val, dict) else {"result": val}
 
 def capture_agent_serial_tool_loop(upstream_root: str) -> Dict[str, Any]:
-    """Capture case agent.serial-tool-loop using scripted provider or print mode with tool calls."""
-    # Run upstream CLI in print mode with scripted prompt requiring sequential tool calls
-    cmd = ["node", "--import", "tsx/esm", "packages/coding-agent/src/cli.ts", "--print", "read file test.txt"]
-    res = subprocess.run(cmd, cwd=upstream_root, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
-    raw: Dict[str, Any] = {
-        "exit_code": res.returncode,
-        "stdout": res.stdout,
-        "stderr": res.stderr
-    }
-    val = normalize_structure(raw)
-    return val if isinstance(val, dict) else {"result": val}
+    """Capture case agent.serial-tool-loop using temporary faux provider extension with tool calls."""
+    extension_code = """import { fauxAssistantMessage, fauxToolCall, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+
+export default function (api: any) {
+  const faux = registerFauxProvider({
+    provider: "faux",
+    models: [{ id: "faux-1", name: "Faux Model" }],
+  });
+  faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("read", { path: "test.txt" }, { id: "call_read_1" })], {
+      stopReason: "toolUse",
+      timestamp: 1000,
+    }),
+    fauxAssistantMessage("file read completed", { timestamp: 2000 }),
+  ]);
+  api.registerProvider(faux.provider);
+  api.registerModel("faux", faux.getModel("faux-1"));
+}
+"""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_file = Path(tmp_dir) / "test.txt"
+        test_file.write_text("hello world", encoding="utf-8")
+        ext_path = str(Path(tmp_dir) / "extension.ts")
+        with open(ext_path, "w", encoding="utf-8") as f:
+            f.write(extension_code)
+
+        cli_ts = str(Path(upstream_root) / "packages" / "coding-agent" / "src" / "cli.ts")
+        cmd = [
+            "node", "--import", "tsx/esm",
+            cli_ts,
+            "--extension", ext_path,
+            "--provider", "faux",
+            "--model", "faux-1",
+            "--print", "read file test.txt"
+        ]
+        res = subprocess.run(cmd, cwd=tmp_dir, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"upstream CLI failed ({res.returncode}): {res.stderr.strip()}")
+        raw: Dict[str, Any] = {
+            "exit_code": res.returncode,
+            "stdout": res.stdout,
+            "stderr": res.stderr
+        }
+        val = normalize_structure(raw)
+        return val if isinstance(val, dict) else {"result": val}
 
 def capture_provider_openai_chat_fragmented_sse(upstream_root: str) -> Dict[str, Any]:
     """Capture case provider.openai-chat.fragmented-sse offline structure."""
