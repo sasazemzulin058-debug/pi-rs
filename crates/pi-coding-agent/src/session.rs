@@ -1,7 +1,9 @@
 //! Session persistence: save transcripts as JSON under
 //! `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.json`, list them, and load by id.
 
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use pi_ai::Message;
@@ -166,132 +168,248 @@ pub fn delete(config_dir: &Path, id: &str) -> anyhow::Result<PathBuf> {
     Ok(legacy_path)
 }
 
-pub fn save_jsonl(path: &Path, session: &Session) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
-    }
-    let mut content = String::new();
-    let header = serde_json::json!({
-        "type": "session",
-        "id": session.id,
-        "created_ms": session.created_ms,
-        "updated_ms": session.updated_ms,
-        "model": session.model,
-        "provider": session.provider,
-        "origin": session.origin,
-    });
-    content.push_str(&serde_json::to_string(&header)?);
-    content.push('\n');
+const NATIVE_SCHEMA: &str = "pi-rs-session";
+const NATIVE_SCHEMA_VERSION: u32 = 1;
 
-    for msg in &session.messages {
-        content.push_str(&serde_json::to_string(msg)?);
-        content.push('\n');
-    }
+#[derive(Serialize, Deserialize)]
+struct NativeEntry {
+    #[serde(rename = "type")]
+    record_type: String,
+    version: u32,
+    entry_id: String,
+    parent_id: Option<String>,
+    message: Message,
+}
 
-    std::fs::write(path, content).with_context(|| format!("write {}", path.display()))?;
+struct SessionLock(PathBuf);
+impl Drop for SessionLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn lock_session(path: &Path) -> anyhow::Result<SessionLock> {
+    let lock_path = PathBuf::from(format!("{}.lock", path.display()));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&lock_path) {
+            Ok(mut file) => {
+                writeln!(file, "{}", std::process::id())?;
+                file.sync_all()?;
+                return Ok(SessionLock(lock_path));
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AlreadyExists && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("acquire session lock {}", lock_path.display()))
+            }
+        }
+    }
+}
+
+fn ensure_private_dir(path: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(path).with_context(|| format!("mkdir {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
     Ok(())
 }
 
-pub fn load_jsonl(path: &Path) -> anyhow::Result<Session> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+fn entry_id(index: usize, message: &Message) -> anyhow::Result<String> {
+    let bytes = serde_json::to_vec(message)?;
+    Ok(format!("e{index:016x}-{}", &compute_sha256(&bytes)[..16]))
+}
 
-    let last_newline_boundary = text.rfind('\n').map(|p| p + 1).unwrap_or(0);
+pub fn save_jsonl(path: &Path, session: &Session) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("session path has no parent"))?;
+    ensure_private_dir(parent)?;
+    let _lock = lock_session(path)?;
 
-    let mut lines: Vec<&str> = text.split('\n').collect();
-    if lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
+    let (persisted, native) = if path.exists() {
+        let loaded = load_jsonl_unlocked(path)?;
+        let native = native_file(path)?;
+        (loaded.messages, native)
+    } else {
+        (Vec::new(), true)
+    };
+    if !native {
+        anyhow::bail!("cannot append to legacy or unversioned JSONL session; save under a new id");
     }
-    if lines.is_empty() {
+    if persisted.len() > session.messages.len()
+        || persisted
+            .iter()
+            .zip(&session.messages)
+            .any(|(a, b)| serde_json::to_value(a).ok() != serde_json::to_value(b).ok())
+    {
+        anyhow::bail!("persisted session history diverges from supplied session");
+    }
+
+    let new_file = !path.exists();
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true).read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("open {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    if new_file {
+        let header = serde_json::json!({"type":"session","schema":NATIVE_SCHEMA,"version":NATIVE_SCHEMA_VERSION,
+            "id":session.id,"created_ms":session.created_ms,"updated_ms":session.updated_ms,
+            "model":session.model,"provider":session.provider,"origin":session.origin});
+        writeln!(file, "{}", serde_json::to_string(&header)?)?;
+    }
+    for (index, message) in session.messages.iter().enumerate().skip(persisted.len()) {
+        let record = NativeEntry {
+            record_type: "entry".into(),
+            version: NATIVE_SCHEMA_VERSION,
+            entry_id: entry_id(index, message)?,
+            parent_id: if index == 0 {
+                None
+            } else {
+                Some(entry_id(index - 1, &session.messages[index - 1])?)
+            },
+            message: message.clone(),
+        };
+        writeln!(file, "{}", serde_json::to_string(&record)?)?;
+    }
+    file.flush()?;
+    file.sync_all()?;
+    // The file is durable here. Directory fsync is not uniformly available on supported platforms.
+    Ok(())
+}
+
+fn native_file(path: &Path) -> anyhow::Result<bool> {
+    let mut text = String::new();
+    std::fs::File::open(path)?.read_to_string(&mut text)?;
+    let first = text
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("empty jsonl session file"))?;
+    let val: serde_json::Value = serde_json::from_str(first)?;
+    Ok(val.get("schema").and_then(|v| v.as_str()) == Some(NATIVE_SCHEMA))
+}
+
+pub fn load_jsonl(path: &Path) -> anyhow::Result<Session> {
+    let _lock = lock_session(path)?;
+    load_jsonl_unlocked(path)
+}
+
+fn load_jsonl_unlocked(path: &Path) -> anyhow::Result<Session> {
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if bytes.is_empty() {
         anyhow::bail!("empty jsonl session file: {}", path.display());
     }
-
-    let total = lines.len();
-    let mut session: Option<Session> = None;
+    let complete_len = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |p| p + 1);
+    if complete_len < bytes.len() {
+        let tail = &bytes[complete_len..];
+        match serde_json::from_slice::<serde_json::Value>(tail) {
+            Err(e) if e.is_eof() => {
+                file.set_len(complete_len as u64)?;
+                file.seek(SeekFrom::Start(complete_len as u64))?;
+                file.sync_all()?;
+                bytes.truncate(complete_len);
+            }
+            Err(e) => return Err(e).context("malformed complete final JSONL record"),
+            Ok(_) => anyhow::bail!("complete final JSONL record is missing newline"),
+        }
+    }
+    let text = std::str::from_utf8(&bytes)?;
+    let mut lines = text.lines();
+    let header: serde_json::Value =
+        serde_json::from_str(lines.next().unwrap()).context("malformed session header")?;
+    if header.get("type").and_then(|v| v.as_str()) != Some("session") {
+        anyhow::bail!("invalid header type in {}", path.display());
+    }
+    let native = header.get("schema").and_then(|v| v.as_str()) == Some(NATIVE_SCHEMA);
+    if native
+        && header.get("version").and_then(|v| v.as_u64()) != Some(NATIVE_SCHEMA_VERSION as u64)
+    {
+        anyhow::bail!("unsupported native session schema version");
+    }
     let mut messages = Vec::new();
-    let mut truncate_offset: Option<usize> = None;
-
-    for (idx, line) in lines.iter().enumerate() {
-        let is_last = idx == total - 1;
-        let line_str = line.trim_end_matches('\r');
-
-        if idx == 0 {
-            let val: serde_json::Value = match serde_json::from_str(line_str) {
-                Ok(v) => v,
-                Err(e) => {
-                    if is_last {
-                        anyhow::bail!("empty header in jsonl session file: {}", path.display());
-                    } else {
-                        return Err(e).with_context(|| {
-                            format!("malformed header line in {}", path.display())
-                        });
-                    }
-                }
-            };
-
-            if val.get("type").and_then(|v| v.as_str()) != Some("session") {
-                anyhow::bail!(
-                    "invalid header type in jsonl session file: {}",
-                    path.display()
-                );
+    let mut previous: Option<String> = None;
+    for (index, line) in lines.enumerate() {
+        if native {
+            let entry: NativeEntry = serde_json::from_str(line)
+                .with_context(|| format!("malformed line {}", index + 2))?;
+            if entry.record_type != "entry"
+                || entry.version != NATIVE_SCHEMA_VERSION
+                || entry.parent_id != previous
+            {
+                anyhow::bail!("invalid native entry chain at line {}", index + 2);
             }
-
-            let id = val
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("missing session id in header: {}", path.display()))?
-                .to_string();
-            let created_ms = val.get("created_ms").and_then(|v| v.as_i64()).unwrap_or(0);
-            let updated_ms = val.get("updated_ms").and_then(|v| v.as_i64()).unwrap_or(0);
-            let model = val
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let provider = val
-                .get("provider")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let origin: SessionOrigin = val
-                .get("origin")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or(SessionOrigin::Native);
-
-            session = Some(Session {
-                id,
-                created_ms,
-                updated_ms,
-                model,
-                provider,
-                messages: Vec::new(),
-                origin,
-            });
-            continue;
-        }
-
-        match serde_json::from_str::<Message>(line_str) {
-            Ok(msg) => messages.push(msg),
-            Err(e) => {
-                if !is_last || !e.is_eof() {
-                    return Err(e).with_context(|| {
-                        format!("malformed line {} in {}", idx + 1, path.display())
-                    });
-                }
-                truncate_offset = Some(last_newline_boundary);
+            let expected = entry_id(index, &entry.message)?;
+            if entry.entry_id != expected {
+                anyhow::bail!("invalid native entry id at line {}", index + 2);
             }
+            previous = Some(entry.entry_id);
+            messages.push(entry.message);
+        } else {
+            messages.push(
+                serde_json::from_str(line)
+                    .with_context(|| format!("malformed line {}", index + 2))?,
+            );
         }
     }
-
-    if let Some(trunc_len) = truncate_offset {
-        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) {
-            let _ = f.set_len(trunc_len as u64);
-        }
-    }
-
-    let mut session =
-        session.ok_or_else(|| anyhow::anyhow!("missing header in {}", path.display()))?;
-    session.messages = messages;
-    Ok(session)
+    Ok(Session {
+        id: header
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("missing session id"))?
+            .into(),
+        created_ms: header
+            .get("created_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        updated_ms: header
+            .get("updated_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        model: header
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .into(),
+        provider: header
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .into(),
+        origin: header
+            .get("origin")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or(SessionOrigin::Native),
+        messages,
+    })
 }
 
 /// Read-only Pi session import representation.
