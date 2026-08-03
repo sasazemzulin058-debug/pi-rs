@@ -36,6 +36,8 @@ fn list_accepts_native_and_legacy_and_ignores_non_sessions() {
     let dir = temp_dir();
     let native = value("native", 20);
     session::save(&dir, &native).unwrap();
+    let native_path = session::session_file_path_jsonl(&dir, "native").unwrap();
+    assert!(native_path.exists());
 
     let sessions = session::sessions_dir(&dir);
     let legacy = value("legacy", 10);
