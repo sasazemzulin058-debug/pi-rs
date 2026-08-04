@@ -28,7 +28,7 @@ Model routing candidate: `gemini-2.0-flash` → Google Generative AI.
 | `resources.context` | Resources | Global/current `AGENTS.md` or `CLAUDE.md` context discovery | **candidate** | `resource.context-precedence` |
 | `resources.trust` | Resources | Trust decision data model; no project executable resource loading | **candidate** | `resource.untrusted-project` |
 | `session.native-write` | Session | Fork-native versioned JSONL append/recovery format; legacy single JSON is accepted only as migration input | **candidate** | `session.native-append-recover` |
-| `session.pi-import` | Session | Read-only import of original Pi v1/v2/v3 sessions; imported files are never mutated | **read-only** | `session.pi-import-checksum` |
+| `session.pi-import` | Session | Explicit API-only read-only import of original Pi v1/v2/v3 sessions; normal CLI resume does not auto-import | **candidate** | `session.pi-import-checksum` |
 | `session.pi-cow` | Session | COW fork-native session created on first mutation of an imported Pi session | **candidate** | `session.pi-cow-provenance` |
 | `extension.none-required` | Extensions | Core functionality operates normally when Node is absent | **candidate** | `extension.node-absent` |
 

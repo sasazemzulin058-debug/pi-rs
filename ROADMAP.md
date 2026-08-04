@@ -1,11 +1,11 @@
 # Roadmap
 
-> **Status:** All milestones from 0.2.0 through 1.0.0 have shipped in
-> [1.0.0](./CHANGELOG.md#100--2026-05-12). The list below records what was
-> delivered and what remains for a future major. New unchecked items are now
-> targeted at 1.x / 2.0.
+> **Status:** Historical milestones through 1.2.0 are recorded below. Current
+> Rust package version is 0.83.0, aligned with upstream `pi-mono` packages.
+> Unchecked items remain candidate, deferred, or unsupported until their
+> fixtures and compatibility gates pass.
 
-## Milestone 1 — Provider parity for streaming ✅ (delivered in 1.0.0)
+## Milestone 1 — Provider parity for streaming ✅ (historical 1.0.0)
 
 - [x] **SSE parsing for Anthropic Messages** (`stream: true`) — emit
       `text_delta` / `thinking_delta` / `toolcall_delta` as they arrive.
@@ -17,7 +17,7 @@
       callers can cancel mid-response.
 - [x] Retry policy with exponential back-off and `Retry-After` honoring.
 
-## Milestone 2 — Coding-agent UX ✅ (delivered in 1.0.0)
+## Milestone 2 — Coding-agent UX ✅ (historical 1.0.0)
 
 - [x] Streaming render in the REPL.
 - [x] **Session persistence** under `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.jsonl`;
@@ -30,7 +30,7 @@
 - [x] **Config file** at `$XDG_CONFIG_HOME/pi-rs/config.toml` (delivered in 0.83.0).
 - [x] `/compact` (auto-summarize context to free room) — delivered in 0.83.0.
 
-## Milestone 3 — Tool ecosystem ✅ (mostly delivered in 1.0.0)
+## Milestone 3 — Tool ecosystem ✅ (mostly historical 1.0.0)
 
 - [x] **Per-call permission prompts** with allow / allow-session / deny.
 - [x] **New tools**: `web_fetch`, `todo`.
@@ -39,7 +39,7 @@
 - [x] **`grep` upgrade**: regex mode, context lines (0.83.0).
 - [ ] **MCP (Model Context Protocol) client**. (1.x — major work)
 
-## Milestone 4 — More providers ✅ (mostly delivered in 1.0.0)
+## Milestone 4 — More providers ✅ (mostly historical 1.0.0)
 
 - [x] **Google Generative AI / Vertex AI** (Gemini via
       `streamGenerateContent?alt=sse`).
@@ -52,7 +52,7 @@
       and OpenAI session-id headers still pending.
 - [ ] **OAuth flows** for Copilot, Codex. (1.x)
 
-## Milestone 5 — Reliability and polish ✅ (delivered in 1.0.0)
+## Milestone 5 — Reliability and polish ✅ (historical 1.0.0)
 
 - [x] **CI**: GitHub Actions matrix (stable + MSRV, macOS + Linux), `cargo
       fmt --check`, `cargo clippy -- -D warnings`, `cargo test`.

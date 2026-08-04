@@ -182,7 +182,7 @@ async fn main() -> anyhow::Result<()> {
         return run_sessions_cmd(&app, action);
     }
 
-    let permission: Arc<dyn pi_agent::PermissionPolicy> = if yolo {
+    let permission: Arc<CliPermission> = if yolo {
         Arc::new(CliPermission::new(Mode::Yolo))
     } else {
         Arc::new(CliPermission::new(Mode::Interactive))

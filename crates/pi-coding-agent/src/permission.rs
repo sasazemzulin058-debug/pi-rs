@@ -79,13 +79,8 @@ async fn prompt(
     reader: Option<Arc<Mutex<Box<dyn BufRead + Send>>>>,
 ) -> PermissionDecision {
     let tool_name = tool_name.to_string();
+    let session_tool_name = tool_name.clone();
     let args_pretty = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
-    let allowed_session_clone: Mutex<std::collections::HashSet<String>> = Mutex::new(
-        allowed_session
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_default(),
-    );
     // run the blocking prompt off the runtime thread
     let decision = tokio::task::spawn_blocking(move || {
         let mut err = std::io::stderr();
@@ -122,13 +117,19 @@ async fn prompt(
 
     if decision == PermissionDecision::AllowSession {
         if let Ok(mut s) = allowed_session.lock() {
-            // Suffix would have been pre-cloned in allowed_session_clone; merge.
-            if let Ok(snap) = allowed_session_clone.lock() {
-                s.extend(snap.iter().cloned());
-            }
+            s.insert(session_tool_name);
         }
     }
     decision
+}
+
+impl CliPermission {
+    pub fn reset_session(&self) {
+        if let Ok(mut allowed) = self.allowed_session.lock() {
+            allowed.clear();
+        }
+        pi_agent::agent_loop::reset_session_permissions(self);
+    }
 }
 
 #[cfg(test)]

@@ -5,19 +5,18 @@ use std::io::{BufRead, Write};
 use std::sync::Arc;
 
 use futures::StreamExt;
-use pi_agent::{
-    run_agent_with_history, tools::default_tools, AgentConfig, AgentEvent, PermissionPolicy,
-};
+use pi_agent::{run_agent_with_history, tools::default_tools, AgentConfig, AgentEvent};
 use pi_ai::{AssistantMessageEvent, Context, Message, StreamOptions};
 use tokio::sync::mpsc;
 
 use crate::config::AppConfig;
+use crate::permission::CliPermission;
 use crate::session::Session;
 use crate::system_prompt::build_system_prompt;
 
 pub async fn run_interactive(
     app: &AppConfig,
-    permission: Arc<dyn PermissionPolicy>,
+    permission: Arc<CliPermission>,
     initial: Option<Session>,
     trust_decision: crate::trust::TrustDecision,
 ) -> anyhow::Result<()> {
@@ -57,7 +56,7 @@ pub async fn run_interactive(
                 }
                 continue;
             }
-            if !handle_slash(&prompt, app, &mut session)? {
+            if !handle_slash(&prompt, app, &permission, &mut session)? {
                 break;
             }
             continue;
@@ -120,7 +119,12 @@ pub async fn run_interactive(
 }
 
 /// Returns `false` if the loop should exit (e.g. `/quit`).
-fn handle_slash(line: &str, app: &AppConfig, session: &mut Session) -> anyhow::Result<bool> {
+fn handle_slash(
+    line: &str,
+    app: &AppConfig,
+    permission: &CliPermission,
+    session: &mut Session,
+) -> anyhow::Result<bool> {
     let (cmd, rest) = match line.split_once(' ') {
         Some((c, r)) => (c, r.trim()),
         None => (line, ""),
@@ -142,6 +146,7 @@ fn handle_slash(line: &str, app: &AppConfig, session: &mut Session) -> anyhow::R
             eprintln!("/compact             summarize older messages into a recap");
         }
         "/reset" => {
+            permission.reset_session();
             *session = Session::new(&app.model);
             eprintln!("(reset; new session id {})", session.id);
         }

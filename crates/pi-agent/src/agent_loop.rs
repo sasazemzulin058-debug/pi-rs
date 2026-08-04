@@ -30,33 +30,33 @@ fn session_permissions() -> &'static Mutex<HashMap<usize, SessionPermissionEntry
     PERMISSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn permission_policy_key(policy: &Arc<dyn crate::types::PermissionPolicy>) -> usize {
-    Arc::as_ptr(policy) as *const () as usize
+fn permission_policy_key(policy: &dyn crate::types::PermissionPolicy) -> usize {
+    policy as *const _ as *const () as usize
 }
 
 fn load_session_permissions(policy: &Arc<dyn crate::types::PermissionPolicy>) -> HashSet<String> {
-    let key = permission_policy_key(policy);
+    let key = permission_policy_key(policy.as_ref());
     let Ok(mut entries) = session_permissions().lock() else {
         return HashSet::new();
     };
     entries.retain(|_, entry| entry.policy.strong_count() > 0);
     entries
         .get(&key)
-        .filter(|entry| {
-            entry
-                .policy
-                .upgrade()
-                .is_some_and(|stored| Arc::ptr_eq(&stored, policy))
-        })
         .map(|entry| entry.allowed_tools.clone())
         .unwrap_or_default()
+}
+
+pub fn reset_session_permissions(policy: &dyn crate::types::PermissionPolicy) {
+    if let Ok(mut entries) = session_permissions().lock() {
+        entries.remove(&permission_policy_key(policy));
+    }
 }
 
 fn remember_session_permission(
     policy: &Arc<dyn crate::types::PermissionPolicy>,
     tool_name: String,
 ) {
-    let key = permission_policy_key(policy);
+    let key = permission_policy_key(policy.as_ref());
     let Ok(mut entries) = session_permissions().lock() else {
         return;
     };
@@ -67,16 +67,6 @@ fn remember_session_permission(
             policy: Arc::downgrade(policy),
             allowed_tools: HashSet::new(),
         });
-    if entry
-        .policy
-        .upgrade()
-        .is_some_and(|stored| !Arc::ptr_eq(&stored, policy))
-    {
-        *entry = SessionPermissionEntry {
-            policy: Arc::downgrade(policy),
-            allowed_tools: HashSet::new(),
-        };
-    }
     entry.allowed_tools.insert(tool_name);
 }
 
