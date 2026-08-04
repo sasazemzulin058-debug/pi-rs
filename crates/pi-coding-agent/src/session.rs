@@ -1,5 +1,6 @@
-//! Session persistence: save transcripts as JSON under
-//! `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.json`, list them, and load by id.
+//! Session persistence: save fork-native JSONL transcripts under
+//! `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.jsonl`, list them, and load by id.
+//! Legacy JSON loads read-only; explicit upstream import APIs create native JSONL.
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};

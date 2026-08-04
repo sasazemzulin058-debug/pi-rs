@@ -12,9 +12,11 @@ previously committed prefix. Loading may recover an incomplete final JSONL
 record by truncating only that tail. Malformed complete records, including
 records in the middle of a file, remain errors.
 
-Legacy `<id>.json` files are accepted as read-only migration input. Upstream Pi
-v1, v2, and v3 session files are also imported read-only and are never mutated;
-the first mutation is saved as a separate fork-native copy-on-write session.
+Legacy `<id>.json` files are accepted as read-only migration input. No in-place
+conversion or automatic rewrite occurs. On resume, the first mutation is saved
+as a new fork-native JSONL session; the legacy file remains unchanged. Upstream
+Pi v1, v2, and v3 import is available only through the explicit import API; the
+normal CLI resume path does not auto-detect or convert those files.
 
 ## Subcommands
 
