@@ -16,7 +16,7 @@ This document defines the implementation milestone and compatibility status of e
 
 ### Milestone M1a (Termux Headless Slice)
 
-M1a fixture gate: all 13 required cases pass locally; hosted CI runs same gate except Termux-only environment case.
+M1a fixture gate: all 13 required cases pass locally; hosted CI runs same gate except Termux-only environment case. Model routing: `gemini-2.0-flash` → Google Generative AI.
 
 | ID | Surface | Description / Contract | Status | Target Fixture |
 | --- | --- | --- | --- | --- |

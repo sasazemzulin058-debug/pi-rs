@@ -248,7 +248,7 @@ async fn generate_invariant_actual_fixtures() {
         }),
     );
 
-    let tool_loop = vec!["file read completed"];
+    let tool_loop = ["file read completed"];
     assert_eq!(tool_loop.len(), 1);
     write_actual(
         "agent.serial-tool-loop",
