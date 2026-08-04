@@ -20,3 +20,27 @@ cargo test --workspace
 
 CI runs the same checks on macOS and Linux against stable Rust and the
 declared MSRV (`1.80`).
+
+## Termux Verification Runner
+
+Termux CI requires external runner attestation (`D4`).
+
+### Repository Variable Format
+
+Configure `vars.TERMUX_RUNNER_LABELS` as a JSON array of strings:
+
+```json
+["self-hosted", "termux"]
+```
+
+### Runner Security
+
+- `persist-credentials: false` MUST be set on checkout steps.
+- Self-hosted runners execute untrusted workflow code; ensure runner isolation.
+- Runner must be ephemeral or fully reset after each job. Workflow cleanup removes only verifier temp directories; it does not clean arbitrary files or build output.
+
+### D4 Blocker Status
+
+Full automated Termux verification depends on external runner infrastructure
+registration (D4 blocker). Workflows validate configuration preflight on hosted
+runners before attempting execution.
