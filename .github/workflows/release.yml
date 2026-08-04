@@ -11,10 +11,14 @@ jobs:
   ci:
     name: required CI for release SHA
     uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
   termux:
     name: authoritative Termux verification
     uses: ./.github/workflows/termux.yml
+    permissions:
+      contents: read
 
   validate:
     name: validate release version
