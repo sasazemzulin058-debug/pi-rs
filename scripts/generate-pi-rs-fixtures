@@ -43,7 +43,7 @@ def main():
         env = os.environ.copy()
         env["PI_INVARIANT_STAGING_DIR"] = staging
         command = [
-            "cargo", "test", "--test", "m1a_invariant_actuals",
+            "cargo", "test", "--locked", "--test", "m1a_invariant_actuals",
             "generate_invariant_actual_fixtures", "--", "--exact",
         ]
         try:

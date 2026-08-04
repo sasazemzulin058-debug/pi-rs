@@ -16,6 +16,8 @@ This document defines the implementation milestone and compatibility status of e
 
 ### Milestone M1a (Termux Headless Slice)
 
+Model routing candidate: `gemini-2.0-flash` → Google Generative AI.
+
 | ID | Surface | Description / Contract | Status | Target Fixture |
 | --- | --- | --- | --- | --- |
 | `cli.print` | CLI | `--print` headless prompt execution | **candidate** | `cli.print.basic` |
