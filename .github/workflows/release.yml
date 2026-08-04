@@ -14,12 +14,6 @@ jobs:
     permissions:
       contents: read
 
-  termux:
-    name: authoritative Termux verification
-    uses: ./.github/workflows/termux.yml
-    permissions:
-      contents: read
-
   validate:
     name: validate release version
     runs-on: ubuntu-latest
@@ -44,7 +38,7 @@ jobs:
 
   build:
     name: build (${{ matrix.target }})
-    needs: [validate, ci, termux]
+    needs: [validate, ci]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -115,6 +109,8 @@ jobs:
           sha256sum pi-rs-* > SHA256SUMS
       - name: Verify release artifacts checksums
         run: ./scripts/verify-release-artifacts dist
+      # Termux evidence comes from local `sh ./scripts/verify-termux`; this
+      # release workflow intentionally does not require a hosted Termux runner.
       - name: Generate provenance attestation
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
