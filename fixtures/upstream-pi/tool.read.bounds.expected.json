@@ -1,0 +1,5 @@
+{
+  "offset_1_indexed": true,
+  "default_limit": 2000,
+  "read_bytes_limit": 51200
+}

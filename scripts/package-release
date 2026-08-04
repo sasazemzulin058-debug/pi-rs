@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET="${1:?target required}"
+DIST_DIR="${2:-dist}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_PATH="$ROOT_DIR/target/$TARGET/release/pi-rs"
+ARCHIVE="$DIST_DIR/pi-rs-$TARGET.tar.gz"
+
+[[ "$TARGET" =~ ^[a-z0-9][a-z0-9._-]+$ ]] || { echo "invalid target" >&2; exit 1; }
+[[ -f "$BIN_PATH" && -x "$BIN_PATH" ]] || { echo "binary missing or not executable: $BIN_PATH" >&2; exit 1; }
+[[ -f "$ROOT_DIR/README.md" && -f "$ROOT_DIR/LICENSE" ]] || { echo "README.md or LICENSE missing" >&2; exit 1; }
+mkdir -p "$DIST_DIR"
+[[ ! -e "$ARCHIVE" ]] || { echo "output already exists: $ARCHIVE" >&2; exit 1; }
+
+python3 - "$BIN_PATH" "$ROOT_DIR/README.md" "$ROOT_DIR/LICENSE" "$ARCHIVE" "$TARGET" <<'PY'
+import gzip, os, stat, sys, tarfile
+from pathlib import Path
+binary, readme, license_path, output, target = map(Path, sys.argv[1:])
+root = f"pi-rs-{target}"
+with output.open("wb") as raw:
+    with gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w|", format=tarfile.PAX_FORMAT) as archive:
+            for source, name, mode in ((binary, "pi-rs", 0o755), (readme, "README.md", 0o644), (license_path, "LICENSE", 0o644)):
+                info = tarfile.TarInfo(f"{root}/{name}")
+                info.size = source.stat().st_size
+                info.mode = mode
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                info.mtime = 0
+                with source.open("rb") as stream:
+                    archive.addfile(info, stream)
+PY
+printf 'Packaged %s -> %s\n' "$BIN_PATH" "$ARCHIVE"
+"$ROOT_DIR/scripts/generate-release-sbom" "$DIST_DIR" "$TARGET"

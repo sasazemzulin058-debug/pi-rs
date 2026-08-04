@@ -3,12 +3,19 @@ import sys
 import os
 import json
 import tempfile
+import subprocess
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'scripts'))
 
-from contract_fixture_lib import normalize_structure, compare_structures
+from contract_fixture_lib import normalize_structure, compare_structures  # type: ignore
 
 class TestComparator(unittest.TestCase):
+    def test_invariant_envelope_and_digest_helpers(self):
+        from contract_fixture_lib import canonical_json_sha256, validate_expected_envelope
+        value = {"case_id": "x", "oracle": "pi-rs-invariant", "expected": {"ok": True}}
+        self.assertIsNone(validate_expected_envelope(value, "x", "pi-rs-invariant"))
+        self.assertEqual(canonical_json_sha256(value), canonical_json_sha256(json.loads(json.dumps(value))))
+        self.assertIsNotNone(validate_expected_envelope({**value, "extra": 1}, "x", "pi-rs-invariant"))
     def setUp(self):
         # Base expected structure
         self.expected = {
@@ -31,6 +38,34 @@ class TestComparator(unittest.TestCase):
                 }
             ]
         }
+
+    def test_normalization_allowlist_filtering(self):
+        obj = {
+            "uuid": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+            "timestamp": "2026-07-27T12:34:56.789Z",
+        }
+        # When allowlist includes /uuid, /uuid is normalized but /timestamp is untouched
+        norm = normalize_structure(obj, allowlist=["/uuid"])
+        self.assertEqual(norm["uuid"], "00000000-0000-0000-0000-000000000000")
+        self.assertEqual(norm["timestamp"], "2026-07-27T12:34:56.789Z")
+
+    def test_invariant_cli_completeness_and_digest_gate(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        with open(os.path.join(root, "fixtures/upstream-pi/manifest.json"), encoding="utf-8") as f:
+            manifest = json.load(f)
+        invariant = [cid for cid in manifest["requiredCaseIds"]["M1a"] if manifest["cases"][cid]["oracle"] == "pi-rs-invariant"]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for cid in invariant:
+                with open(os.path.join(root, "fixtures/upstream-pi", f"{cid}.expected.json"), encoding="utf-8") as f:
+                    expected = json.load(f)
+                with open(os.path.join(tmpdir, f"{cid}.actual.json"), "w", encoding="utf-8") as f:
+                    json.dump(expected["expected"], f)
+            command = ["python3", os.path.join(root, "scripts/compare-contract-fixtures"), "--milestone", "M1a", "--invariant-only", "--actual", tmpdir]
+            self.assertEqual(subprocess.run(command, capture_output=True, text=True).returncode, 0)
+            os.remove(os.path.join(tmpdir, f"{invariant[0]}.actual.json"))
+            failed = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("actual output file missing", failed.stdout)
 
     def test_normalization_specific_keys(self):
         # Verify that specific keys are normalized

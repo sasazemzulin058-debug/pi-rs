@@ -1,0 +1,13 @@
+{
+  "chunks": [
+    "data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+    "data: [DONE]\n\n"
+  ],
+  "expected_events": [
+    "Start",
+    "TextStart",
+    "TextDelta(hello)",
+    "TextEnd",
+    "Done"
+  ]
+}

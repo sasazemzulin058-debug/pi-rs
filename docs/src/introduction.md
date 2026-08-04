@@ -16,5 +16,5 @@ The project is split into three crates published on crates.io:
 - [`pi-coding-agent`](https://crates.io/crates/pi-coding-agent) — the `pi-rs`
   CLI: print mode, interactive REPL, session persistence, slash commands.
 
-Source: <https://github.com/nktkt/pi>. Upstream:
+Source: <https://github.com/sasazemzulin058-debug/pi-rs>. Upstream:
 <https://github.com/earendil-works/pi>.

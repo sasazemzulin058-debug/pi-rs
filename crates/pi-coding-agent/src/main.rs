@@ -174,17 +174,15 @@ async fn main() -> anyhow::Result<()> {
     let yolo = cli.yolo || file_cfg.yolo;
     let json = cli.json || file_cfg.json;
 
-    let app = AppConfig {
-        max_turns,
-        thinking_level,
-        ..AppConfig::default()
-    };
+    let mut app = AppConfig::new()?;
+    app.max_turns = max_turns;
+    app.thinking_level = thinking_level;
 
     if let Some(Cmd::Sessions { action }) = cli.cmd {
         return run_sessions_cmd(&app, action);
     }
 
-    let permission: Arc<dyn pi_agent::PermissionPolicy> = if yolo {
+    let permission: Arc<CliPermission> = if yolo {
         Arc::new(CliPermission::new(Mode::Yolo))
     } else {
         Arc::new(CliPermission::new(Mode::Interactive))
@@ -241,8 +239,7 @@ fn run_sessions_cmd(app: &AppConfig, action: SessionAction) -> anyhow::Result<()
             Ok(())
         }
         SessionAction::Delete { id } => {
-            let path = session::sessions_dir(&app.config_dir).join(format!("{id}.json"));
-            std::fs::remove_file(&path)?;
+            let path = session::delete(&app.config_dir, &id)?;
             eprintln!("deleted {}", path.display());
             Ok(())
         }

@@ -4,7 +4,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'scripts'))
 
-from contract_fixture_lib import validate_manifest
+from contract_fixture_lib import validate_manifest  # type: ignore
 
 class TestValidator(unittest.TestCase):
     def setUp(self):
@@ -35,7 +35,8 @@ class TestValidator(unittest.TestCase):
                 "case_1": {
                     "captured": False,
                     "description": "Case 1 description",
-                    "oracle": "upstream-pi"
+                    "oracle": "upstream-pi",
+                    "normalizationAllowlist": []
                 }
             }
         }
@@ -157,13 +158,20 @@ class TestValidator(unittest.TestCase):
         errors = validate_manifest(manifest)
         self.assertTrue(any("requiredCaseIds.M1a does not match the canonical set" in e for e in errors))
 
+    def test_unknown_top_level_key_rejected(self):
+        manifest = dict(self.valid_manifest)
+        manifest["unexpected_key"] = "foo"
+        errors = validate_manifest(manifest)
+        self.assertTrue(any("Unexpected top-level keys in manifest" in e for e in errors))
+
     def test_invalid_oracle(self):
         manifest = dict(self.valid_manifest)
         manifest["cases"] = {
             "case_1": {
                 "captured": False,
                 "description": "Case 1 description",
-                "oracle": "invalid-oracle"
+                "oracle": "invalid-oracle",
+                "normalizationAllowlist": []
             }
         }
         errors = validate_manifest(manifest)
@@ -188,7 +196,8 @@ class TestValidator(unittest.TestCase):
             "case_1": {
                 "captured": True,
                 "description": "Case 1 description",
-                "oracle": "upstream-pi"
+                "oracle": "upstream-pi",
+                "normalizationAllowlist": []
             }
         }
         errors_captured = validate_manifest(manifest_captured, milestone="M1a")

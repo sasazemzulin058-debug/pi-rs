@@ -217,7 +217,7 @@ pub struct StreamOptions {
     pub cache_retention: CacheRetention,
 }
 
-/// Model descriptor — analogous to the Model<TApi> interface in pi-ai.
+/// Model descriptor — analogous to the `Model<TApi>` interface in pi-ai.
 #[derive(Debug, Clone)]
 pub struct Model {
     pub id: String,

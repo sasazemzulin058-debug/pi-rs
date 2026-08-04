@@ -7,11 +7,12 @@
     "lockfileSha256": "472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
   },
   "captureEnvironment": {
-    "captureStatus": "pending",
-    "host": null,
-    "nodeVersion": null,
-    "bunVersion": null,
-    "digest": null
+    "captureStatus": "completed",
+    "host": "x86_64",
+    "nodeVersion": "v24.18.0",
+    "bunVersion": "unknown",
+    "digest": "sha256:46f70608cc0e6b55272e9cf239c8c46e0735d1553dd62eeaeb8bdc234aaa7f98",
+    "capturedAt": "2026-08-04T07:30:19.983471+00:00"
   },
   "requiredCaseIds": {
     "M0": [],
@@ -57,158 +58,189 @@
   },
   "cases": {
     "cli.print.basic": {
-      "captured": false,
+      "captured": true,
       "description": "Headless --print prompt execution",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "agent.serial-tool-loop": {
-      "captured": false,
+      "captured": true,
       "description": "Serial tool execution and cancellation",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "provider.openai-chat.fragmented-sse": {
-      "captured": false,
+      "captured": true,
       "description": "OpenAI Chat Completions compatible SSE stream parsing",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "provider.fake-stream-cancel": {
       "captured": false,
       "description": "Deterministic provider cancel/abort and SSE event limits",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "tool.read.bounds": {
-      "captured": false,
+      "captured": true,
       "description": "Bounded text read with 1-indexed offsets",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "tool.bash.cancel-descendants": {
-      "captured": false,
+      "captured": true,
       "description": "Shell execution, process-group cancellation and reaping",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "resource.context-precedence": {
-      "captured": false,
+      "captured": true,
       "description": "Global/current AGENTS.md or CLAUDE.md context precedence",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "resource.untrusted-project": {
-      "captured": false,
+      "captured": true,
       "description": "Trust decision data model without loading project resources",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "session.native-append-recover": {
       "captured": false,
       "description": "New native v3-compatible JSONL session append and recovery",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "session.pi-import-checksum": {
       "captured": false,
       "description": "Read-only import of original Pi sessions with checksum check",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "session.pi-cow-provenance": {
       "captured": false,
       "description": "First mutation of imported Pi session creates copy-on-write session",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "extension.node-absent": {
       "captured": false,
       "description": "Agent operates normally when Node is absent from PATH",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "termux.env": {
       "captured": false,
       "description": "Environment validation for paths, TMPDIR, and shell",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "cli.json-events": {
       "captured": false,
       "description": "Structured JSON event output",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "tool.write": {
       "captured": false,
       "description": "Atomic write semantics",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "tool.edit": {
       "captured": false,
       "description": "Exact multi-edit semantics",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "tool.grep-find-ls": {
       "captured": false,
       "description": "Ignored-path discovery and bounded search",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "resources.skills-prompts-themes": {
       "captured": false,
       "description": "Skills, prompt templates and themes",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "agent.retry-auto-compaction": {
       "captured": false,
       "description": "Serial retry and one automatic context-overflow compaction retry",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "cli.interactive": {
       "captured": false,
       "description": "Interactive terminal mode",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "cli.rpc": {
       "captured": false,
       "description": "Public Pi JSONL RPC",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "agent.parallel-tools": {
       "captured": false,
       "description": "Parallel batch ordering and cancellation",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "agent.manual-compaction-scheduling": {
       "captured": false,
       "description": "Manual compaction and scheduling interaction with queue/steer/follow-up",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "provider.anthropic": {
       "captured": false,
       "description": "Anthropic Messages",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "provider.openai-responses": {
       "captured": false,
       "description": "OpenAI Responses",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "provider.google": {
       "captured": false,
       "description": "Google Generative AI",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "resources.remote-packages": {
       "captured": false,
       "description": "npm: and git: package source installation",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "session.pi-inplace-write": {
       "captured": false,
       "description": "In-place mutation of Pi session files",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "extension.pi-tier-a": {
       "captured": false,
       "description": "Tools, commands, cancelable hooks, persisted state and basic UI via optional Node host",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "extension.bun-private-native-custom-ui": {
       "captured": false,
       "description": "Bun APIs, private imports, native addons and custom Pi TUI components",
+      "normalizationAllowlist": [],
       "oracle": "pi-rs-invariant"
     },
     "extension.omp": {
       "captured": false,
       "description": "Oh My Pi public API intersection",
+      "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     }
   }

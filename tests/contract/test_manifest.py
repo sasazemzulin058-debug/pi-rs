@@ -22,19 +22,19 @@ class TestFixtureManifest(unittest.TestCase):
         errors = validate_manifest(manifest, milestone="M0")
         self.assertEqual(errors, [], f"M0 manifest validation contains errors:\n" + "\n".join(errors))
         
-    def test_m1a_cases_are_pending(self):
+    def test_m1a_cases_have_truthful_capture_state(self):
         manifest = load_manifest()
         req_cases = manifest.get("requiredCaseIds", {})
         cases = manifest.get("cases", {})
-        
         self.assertIn("M1a", req_cases)
-        m1a_cases = req_cases["M1a"]
-        self.assertEqual(len(m1a_cases), 13)
-        
-        for case_id in m1a_cases:
+        self.assertEqual(len(req_cases["M1a"]), 13)
+        for case_id in req_cases["M1a"]:
             self.assertIn(case_id, cases)
-            case_info = cases[case_id]
-            self.assertFalse(case_info.get("captured"), f"Case {case_id} should be pending/uncaptured in M0 baseline")
+            info = cases[case_id]
+            if info.get("oracle") == "pi-rs-invariant":
+                self.assertFalse(info.get("captured"), f"Invariant case {case_id} must not claim upstream capture")
+            else:
+                self.assertTrue(info.get("captured"), f"Upstream case {case_id} must have capture evidence")
 
 if __name__ == '__main__':
     unittest.main()

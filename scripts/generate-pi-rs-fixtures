@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from contract_fixture_lib import load_manifest
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--milestone", required=True)
+    parser.add_argument("--actual", required=True)
+    parser.add_argument("--invariant-only", action="store_true")
+    args = parser.parse_args()
+
+    root = Path(__file__).resolve().parent.parent
+    manifest = load_manifest()
+    case_ids = manifest.get("requiredCaseIds", {}).get(args.milestone)
+    if not isinstance(case_ids, list) or len(case_ids) != len(set(case_ids)):
+        print(f"invalid milestone case set: {args.milestone}", file=sys.stderr)
+        return 2
+    cases = manifest.get("cases", {})
+    invariant = [cid for cid in case_ids if cases.get(cid, {}).get("oracle") == "pi-rs-invariant"]
+    upstream_cases = [cid for cid in case_ids if cases.get(cid, {}).get("oracle") == "upstream-pi" and cases.get(cid, {}).get("captured", False)]
+    upstream_pending = [cid for cid in case_ids if cases.get(cid, {}).get("oracle") == "upstream-pi" and not cases.get(cid, {}).get("captured", False)]
+    if upstream_pending and not args.invariant_only:
+        print("upstream cases pending capture; pass --invariant-only: " + ", ".join(upstream_pending), file=sys.stderr)
+        return 2
+    if upstream_pending:
+        print("invariant-only generation; upstream cases pending: " + ", ".join(upstream_pending), file=sys.stderr)
+
+    destination = Path(args.actual).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    if any(destination.iterdir()):
+        print(f"actual directory must be empty: {destination}", file=sys.stderr)
+        return 2
+
+    with tempfile.TemporaryDirectory(prefix="pi-rs-m1a-") as staging:
+        env = os.environ.copy()
+        env["PI_INVARIANT_STAGING_DIR"] = staging
+        command = [
+            "cargo", "test", "--locked", "--test", "m1a_invariant_actuals",
+            "generate_invariant_actual_fixtures", "--", "--exact",
+        ]
+        try:
+            result = subprocess.run(
+                command, cwd=root, env=env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True, timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            print("invariant fixture generation timed out", file=sys.stderr)
+            return 2
+        if result.returncode:
+            detail = (result.stderr or result.stdout)[-10000:]
+            print(detail, file=sys.stderr)
+            return 1
+
+        expected = {f"{cid}.actual.json" for cid in invariant + upstream_cases}
+        produced = {p.name for p in Path(staging).iterdir() if p.is_file()}
+        if produced != expected:
+            print(f"invariant fixture set mismatch: expected {sorted(expected)}, got {sorted(produced)}", file=sys.stderr)
+            return 1
+        for name in sorted(produced):
+            shutil.copy2(Path(staging) / name, destination / name)
+
+    if upstream_pending:
+        print(f"generated {len(invariant) + len(upstream_cases)} actual fixture cases; upstream pending")
+        return 0 if args.invariant_only else 2
+    print(f"generated {len(invariant) + len(upstream_cases)} actual fixture cases")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

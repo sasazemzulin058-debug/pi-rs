@@ -12,7 +12,7 @@ keywords = ["llm", "ai", "agent", "tools", "coding-agent"]
 categories = ["asynchronous", "api-bindings"]
 
 [dependencies]
-pi-ai = { path = "../pi-ai", version = "1.2.0" }
+pi-ai = { path = "../pi-ai", version = "0.83.0" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 serde = { workspace = true }

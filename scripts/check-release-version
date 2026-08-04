@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Scripts/check-release-version
+# Validates workspace version, crate versions, internal dependency versions, and CHANGELOG heading.
+
+TAG_VERSION=""
+if [ "${1:-}" != "" ]; then
+    TAG_VERSION="$1"
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CARGO_TOML="$ROOT_DIR/Cargo.toml"
+
+if [ ! -f "$CARGO_TOML" ]; then
+    echo "::error::Cargo.toml not found at $CARGO_TOML"
+    exit 1
+fi
+
+WS_VERSION=$(grep '^version = ' "$CARGO_TOML" | head -n1 | cut -d '"' -f2)
+
+if [ -z "$WS_VERSION" ]; then
+    echo "::error::Could not determine workspace version from $CARGO_TOML"
+    exit 1
+fi
+
+if [ -n "$TAG_VERSION" ]; then
+    # Strip leading 'v' if present
+    CLEAN_TAG="${TAG_VERSION#v}"
+    if [ "$CLEAN_TAG" != "$WS_VERSION" ]; then
+        echo "::error::Release version tag '$TAG_VERSION' (clean: '$CLEAN_TAG') does not match workspace version '$WS_VERSION'"
+        exit 1
+    fi
+fi
+
+# Check internal crates use workspace version or match WS_VERSION
+CRATES=$(find "$ROOT_DIR/crates" -name "Cargo.toml")
+for crate in $CRATES; do
+    # Check crate version setting if explicitly defined
+    CRATE_VER=$(grep '^version' "$crate" | head -n1 || true)
+    if [ -n "$CRATE_VER" ] && ! echo "$CRATE_VER" | grep -q 'version.workspace = true'; then
+        VER_VAL=$(echo "$CRATE_VER" | cut -d '"' -f2)
+        if [ "$VER_VAL" != "$WS_VERSION" ]; then
+            echo "::error::Crate $crate version '$VER_VAL' does not match workspace version '$WS_VERSION'"
+            exit 1
+        fi
+    fi
+
+    # Check internal dependencies in crate Cargo.toml (e.g. pi-ai = { ..., version = "0.83.0" })
+    DEP_VERS=$(grep -E 'pi-(ai|agent|coding-agent).*version = "' "$crate" | cut -d '"' -f4 || true)
+    for dv in $DEP_VERS; do
+        if [ "$dv" != "$WS_VERSION" ]; then
+            echo "::error::Crate $crate internal dependency version '$dv' does not match workspace version '$WS_VERSION'"
+            exit 1
+        fi
+    done
+done
+
+# Check CHANGELOG.md heading for version
+CHANGELOG="$ROOT_DIR/CHANGELOG.md"
+if [ -f "$CHANGELOG" ]; then
+    if ! grep -E "^## \[$WS_VERSION\]" "$CHANGELOG" > /dev/null; then
+        echo "::error::CHANGELOG.md does not contain heading for version ## [$WS_VERSION]"
+        exit 1
+    fi
+else
+    echo "::error::CHANGELOG.md not found at $CHANGELOG"
+    exit 1
+fi
+
+echo "Version verification passed: $WS_VERSION"
+exit 0

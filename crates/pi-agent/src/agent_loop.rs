@@ -4,7 +4,7 @@
 //! decisions. Cancellation is honored via `StreamOptions::cancel`.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use futures::StreamExt;
 use pi_ai::{AssistantMessageEvent, Content, Context, Message, StopReason, ToolResultMessage};
@@ -18,6 +18,56 @@ use crate::types::{AgentConfig, AgentEvent, AgentTool, AgentToolResult, Permissi
 pub struct AgentRun {
     pub messages: Vec<Message>,
     pub stopped_at_turn_limit: bool,
+}
+
+struct SessionPermissionEntry {
+    policy: Weak<dyn crate::types::PermissionPolicy>,
+    allowed_tools: HashSet<String>,
+}
+
+fn session_permissions() -> &'static Mutex<HashMap<usize, SessionPermissionEntry>> {
+    static PERMISSIONS: OnceLock<Mutex<HashMap<usize, SessionPermissionEntry>>> = OnceLock::new();
+    PERMISSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn permission_policy_key(policy: &dyn crate::types::PermissionPolicy) -> usize {
+    policy as *const _ as *const () as usize
+}
+
+fn load_session_permissions(policy: &Arc<dyn crate::types::PermissionPolicy>) -> HashSet<String> {
+    let key = permission_policy_key(policy.as_ref());
+    let Ok(mut entries) = session_permissions().lock() else {
+        return HashSet::new();
+    };
+    entries.retain(|_, entry| entry.policy.strong_count() > 0);
+    entries
+        .get(&key)
+        .map(|entry| entry.allowed_tools.clone())
+        .unwrap_or_default()
+}
+
+pub fn reset_session_permissions(policy: &dyn crate::types::PermissionPolicy) {
+    if let Ok(mut entries) = session_permissions().lock() {
+        entries.remove(&permission_policy_key(policy));
+    }
+}
+
+fn remember_session_permission(
+    policy: &Arc<dyn crate::types::PermissionPolicy>,
+    tool_name: String,
+) {
+    let key = permission_policy_key(policy.as_ref());
+    let Ok(mut entries) = session_permissions().lock() else {
+        return;
+    };
+    entries.retain(|_, entry| entry.policy.strong_count() > 0);
+    let entry = entries
+        .entry(key)
+        .or_insert_with(|| SessionPermissionEntry {
+            policy: Arc::downgrade(policy),
+            allowed_tools: HashSet::new(),
+        });
+    entry.allowed_tools.insert(tool_name);
 }
 
 #[instrument(skip(config, initial_prompt, events), fields(model = %config.model.id))]
@@ -51,7 +101,10 @@ pub async fn run_agent_with_history(
         .map(|t| crate::types::tool_def(t.as_ref()))
         .collect();
 
-    let mut session_allowed: HashSet<String> = HashSet::new();
+    // `AllowSession` belongs to the permission-policy/session lifetime rather
+    // than one invocation. Interactive mode invokes this function once per
+    // user turn while reusing the same policy Arc.
+    let mut session_allowed = load_session_permissions(&config.permission);
     let mut turn: u32 = 0;
     let mut stopped_at_turn_limit = false;
 
@@ -148,6 +201,7 @@ pub async fn run_agent_with_history(
                     PermissionDecision::Allow => {}
                     PermissionDecision::AllowSession => {
                         session_allowed.insert(name.clone());
+                        remember_session_permission(&config.permission, name.clone());
                     }
                     PermissionDecision::Deny { reason } => {
                         emit(
