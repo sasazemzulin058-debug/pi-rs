@@ -11,7 +11,7 @@ version = "1.2.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
-repository = "https://github.com/earendil-works/pi"
+repository = "https://github.com/sasazemzulin058-debug/pi-rs"
 authors = ["Pi Rust Port Contributors"]
 
 [workspace.dependencies]

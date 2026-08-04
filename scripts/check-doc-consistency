@@ -1,30 +1,66 @@
 #!/usr/bin/env python3
 import sys
-import re
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
-def check_docs():
+
+def check_docs(root=ROOT):
     errors = []
-    
-    # Check README.md contains baseline references
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    cargo = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+    version = cargo["workspace"]["package"]["version"]
+    repository = cargo["workspace"]["package"]["repository"]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    roadmap = (root / "ROADMAP.md").read_text(encoding="utf-8")
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    crate_readme = (root / "crates/pi-coding-agent/README.md").read_text(encoding="utf-8")
+    session_path = "$XDG_CONFIG_HOME/pi-rs/sessions/<id>.jsonl"
+    config_path = "$XDG_CONFIG_HOME/pi-rs/config.toml"
+
+    version_marker = next((line for line in readme.splitlines() if "Cargo.toml" in line and "workspace" in line), "")
+    if f"version {version}" not in version_marker:
+        errors.append(f"README.md workspace version does not match {version}")
+    if repository not in readme:
+        errors.append("README.md missing current repository URL")
+    if repository != "https://github.com/sasazemzulin058-debug/pi-rs":
+        errors.append(f"Cargo.toml has unexpected current repository URL {repository}")
     if "fb9be67" not in readme and "f0deb8d" not in readme:
         errors.append("README.md is missing reference to baseline commits")
-        
-    # Check compatibility matrix reflects current status
-    matrix = (ROOT / "docs" / "compatibility-matrix.md").read_text(encoding="utf-8")
+    matrix = (root / "docs" / "compatibility-matrix.md").read_text(encoding="utf-8")
     if "gemini-2.0-flash" not in matrix:
         errors.append("docs/compatibility-matrix.md missing explicit Gemini model routing")
-        
+    if session_path not in crate_readme:
+        errors.append("crates/pi-coding-agent/README.md missing canonical session path")
+    if session_path not in roadmap:
+        errors.append("ROADMAP.md missing canonical session path")
+    if config_path not in roadmap:
+        errors.append("ROADMAP.md missing canonical config path")
+    if config_path not in changelog:
+        errors.append("CHANGELOG.md missing canonical config path")
+    if "pi-rs" not in readme.split("## Installation", 1)[0]:
+        errors.append("README.md missing current pi-rs binary/project namespace")
+    for path, text, stale in [
+        ("crates/pi-coding-agent/README.md", crate_readme, "$XDG_CONFIG_HOME/pi/sessions/<id>.json"),
+        ("ROADMAP.md", roadmap, "$XDG_CONFIG_HOME/pi/sessions/<id>.json"),
+        ("ROADMAP.md", roadmap, "$XDG_CONFIG_HOME/pi/config.toml"),
+        ("CHANGELOG.md", changelog, "$XDG_CONFIG_HOME/pi/config.toml"),
+    ]:
+        if stale in text:
+            errors.append(f"{path} contains stale path {stale}")
+    return errors
+
+
+def main():
+    errors = check_docs()
     if errors:
         print("Doc consistency check failed:")
-        for err in errors:
-            print(f" - {err}")
-        sys.exit(1)
-        
+        for error in errors:
+            print(f" - {error}")
+        return 1
     print("Doc consistency check passed.")
+    return 0
+
 
 if __name__ == "__main__":
-    check_docs()
+    raise SystemExit(main())

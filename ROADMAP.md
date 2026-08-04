@@ -20,14 +20,14 @@
 ## Milestone 2 — Coding-agent UX ✅ (delivered in 1.0.0)
 
 - [x] Streaming render in the REPL.
-- [x] **Session persistence** under `$XDG_CONFIG_HOME/pi/sessions/<id>.json`;
+- [x] **Session persistence** under `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.jsonl`;
       `pi-rs --resume <id>` and `pi-rs sessions list / show / delete` (inherited behavior; candidate until Pi fixtures pass).
 - [x] **`AGENTS.md` / project-prompt loading**.
 - [x] Slash commands: `/clear` (as `/reset`), `/cost`, `/tools`, `/sessions`,
       `/resume`, `/session`, `/help`, `/model`, `/quit`, `/exit`.
 - [x] **Print-mode JSON output** (`-p --json`) — emit structured events for
       scripting. (delivered in 1.1.0)
-- [x] **Config file** at `$XDG_CONFIG_HOME/pi/config.toml` (delivered in 1.2.0).
+- [x] **Config file** at `$XDG_CONFIG_HOME/pi-rs/config.toml` (delivered in 1.2.0).
 - [x] `/compact` (auto-summarize context to free room) — delivered in 1.2.0.
 
 ## Milestone 3 — Tool ecosystem ✅ (mostly delivered in 1.0.0)

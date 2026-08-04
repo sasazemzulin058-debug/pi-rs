@@ -1,7 +1,7 @@
 # pi-agent
 
 Agent runtime with tool calling. Part of the
-[`pi`](https://github.com/nktkt/pi) agent harness — a Rust port of
+[`pi`](https://github.com/sasazemzulin058-debug/pi-rs) agent harness — a Rust port of
 [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi).
 
 Builds on [`pi-ai`](https://crates.io/crates/pi-ai) and adds:

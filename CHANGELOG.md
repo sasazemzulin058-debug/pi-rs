@@ -39,7 +39,7 @@ Ten focused features merged in from 10 parallel sub-agent worktrees.
     context lines use `path-lineno-line` (rg convention).
 
 - **`pi-coding-agent`**
-  - **`pi/config.toml`** — `$XDG_CONFIG_HOME/pi/config.toml` loaded before
+  - **`pi-rs/config.toml`** — `$XDG_CONFIG_HOME/pi-rs/config.toml` loaded before
     argv. Keys: `model`, `max_turns`, `thinking_level`, `yolo`, `json`.
     CLI flags and env still win; the file fills holes.
   - **`/compact` slash command** — summarizes older turns (anything before
