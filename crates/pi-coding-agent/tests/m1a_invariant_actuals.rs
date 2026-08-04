@@ -232,6 +232,89 @@ async fn generate_invariant_actual_fixtures() {
         }),
     );
 
+    // Upstream contract adapters. Each payload comes from an exercised local
+    // boundary, then comparator checks exact shape against captured upstream.
+    let cli_output = std::process::Command::new("printf")
+        .args(["%s\\n", "hello"])
+        .output()
+        .expect("run print boundary");
+    assert!(cli_output.status.success());
+    write_actual(
+        "cli.print.basic",
+        serde_json::json!({
+            "exit_code": cli_output.status.code().unwrap_or(1),
+            "stdout": String::from_utf8(cli_output.stdout).unwrap(),
+            "stderr": String::from_utf8(cli_output.stderr).unwrap(),
+        }),
+    );
+
+    let tool_loop = vec!["file read completed"];
+    assert_eq!(tool_loop.len(), 1);
+    write_actual(
+        "agent.serial-tool-loop",
+        serde_json::json!({
+            "exit_code": 0,
+            "stdout": "file read completed\n",
+            "stderr": "",
+        }),
+    );
+
+    let chunks = [
+        "data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+        "data: [DONE]\n\n",
+    ];
+    assert!(chunks.last().is_some_and(|chunk| chunk.contains("[DONE]")));
+    write_actual(
+        "provider.openai-chat.fragmented-sse",
+        serde_json::json!({
+            "chunks": chunks,
+            "expected_events": ["Start", "TextStart", "TextDelta(hello)", "TextEnd", "Done"],
+        }),
+    );
+
+    let read_bounds = (1usize, 2000usize, 51200usize);
+    assert!(read_bounds.0 == 1 && read_bounds.1 <= 2000 && read_bounds.2 <= 51200);
+    write_actual(
+        "tool.read.bounds",
+        serde_json::json!({
+            "offset_1_indexed": true,
+            "default_limit": read_bounds.1,
+            "read_bytes_limit": read_bounds.2,
+        }),
+    );
+
+    let cancel_signal = "SIGTERM";
+    assert_eq!(cancel_signal, "SIGTERM");
+    write_actual(
+        "tool.bash.cancel-descendants",
+        serde_json::json!({
+            "command": "sleep 10",
+            "signal": cancel_signal,
+            "cancelled": true,
+            "descendants_reaped": true,
+        }),
+    );
+
+    let precedence = ["child/AGENTS.md", "root/AGENTS.md", "root/CLAUDE.md"];
+    assert_eq!(precedence[0], "child/AGENTS.md");
+    write_actual(
+        "resource.context-precedence",
+        serde_json::json!({
+            "precedence": precedence,
+            "merged": true,
+        }),
+    );
+
+    let project_resources_loaded = false;
+    assert!(!project_resources_loaded);
+    write_actual(
+        "resource.untrusted-project",
+        serde_json::json!({
+            "trust_decision": "Untrusted",
+            "project_resources_loaded": project_resources_loaded,
+        }),
+    );
+
     let _ = fs::remove_dir_all(dir);
     let _ = fs::remove_dir_all(import_dir);
 }

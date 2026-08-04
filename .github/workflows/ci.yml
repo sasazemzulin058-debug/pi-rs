@@ -103,12 +103,12 @@ jobs:
       - name: Run comparator self-tests
         run: |
           python3 scripts/compare-contract-fixtures --self-test
-      - name: Run invariant fixture gate
+      - name: Run full M1a fixture gate
         run: |
-          actual_dir=$(mktemp -d)
+          actual_dir=.tmp-m1a-actual
           trap 'rm -rf "$actual_dir"' EXIT
-          ./scripts/generate-pi-rs-fixtures --milestone M1a --actual "$actual_dir" --invariant-only
-          ./scripts/compare-contract-fixtures --milestone M1a --actual "$actual_dir" --invariant-only --exclude-case termux.env
+          ./scripts/generate-pi-rs-fixtures --milestone M1a --actual "$actual_dir"
+          ./scripts/compare-contract-fixtures --milestone M1a --actual "$actual_dir" --exclude-case termux.env
 
   docs-check:
     name: docs-check

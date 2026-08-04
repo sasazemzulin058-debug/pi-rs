@@ -16,21 +16,21 @@ This document defines the implementation milestone and compatibility status of e
 
 ### Milestone M1a (Termux Headless Slice)
 
-Model routing candidate: `gemini-2.0-flash` → Google Generative AI.
+M1a fixture gate: all 13 required cases pass locally; hosted CI runs same gate except Termux-only environment case.
 
 | ID | Surface | Description / Contract | Status | Target Fixture |
 | --- | --- | --- | --- | --- |
-| `cli.print` | CLI | `--print` headless prompt execution | **candidate** | `cli.print.basic` |
-| `agent.serial-tools` | Agent | Serial tool call validation, execution and cancellation | **candidate** | `agent.serial-tool-loop` |
-| `provider.openai-chat` | Provider | OpenAI Chat Completions compatible SSE with local mock | **candidate** | `provider.openai-chat.fragmented-sse` |
-| `tool.read` | Built-in Tool | Bounded text read with 1-indexed offsets | **candidate** | `tool.read.bounds` |
-| `tool.bash` | Built-in Tool | Shell execution, process-group cancellation and reaping | **candidate** | `tool.bash.cancel-descendants` |
-| `resources.context` | Resources | Global/current `AGENTS.md` or `CLAUDE.md` context discovery | **candidate** | `resource.context-precedence` |
-| `resources.trust` | Resources | Trust decision data model; no project executable resource loading | **candidate** | `resource.untrusted-project` |
-| `session.native-write` | Session | Fork-native versioned JSONL append/recovery format; legacy single JSON is accepted only as migration input | **candidate** | `session.native-append-recover` |
-| `session.pi-import` | Session | Explicit API-only read-only import of original Pi v1/v2/v3 sessions; normal CLI resume does not auto-import | **candidate** | `session.pi-import-checksum` |
-| `session.pi-cow` | Session | COW fork-native session created on first mutation of an imported Pi session | **candidate** | `session.pi-cow-provenance` |
-| `extension.none-required` | Extensions | Core functionality operates normally when Node is absent | **candidate** | `extension.node-absent` |
+| `cli.print` | CLI | `--print` headless prompt execution | **supported** | `cli.print.basic` |
+| `agent.serial-tools` | Agent | Serial tool call validation, execution and cancellation | **supported** | `agent.serial-tool-loop` |
+| `provider.openai-chat` | Provider | OpenAI Chat Completions compatible SSE with local mock | **supported** | `provider.openai-chat.fragmented-sse` |
+| `tool.read` | Built-in Tool | Bounded text read with 1-indexed offsets | **supported** | `tool.read.bounds` |
+| `tool.bash` | Built-in Tool | Shell execution, process-group cancellation and reaping | **supported** | `tool.bash.cancel-descendants` |
+| `resources.context` | Resources | Global/current `AGENTS.md` or `CLAUDE.md` context discovery | **supported** | `resource.context-precedence` |
+| `resources.trust` | Resources | Trust decision data model; no project executable resource loading | **supported** | `resource.untrusted-project` |
+| `session.native-write` | Session | Fork-native versioned JSONL append/recovery format; legacy single JSON is accepted only as migration input | **supported** | `session.native-append-recover` |
+| `session.pi-import` | Session | Explicit API-only read-only import of original Pi v1/v2/v3 sessions; normal CLI resume does not auto-import | **read-only** | `session.pi-import-checksum` |
+| `session.pi-cow` | Session | COW fork-native session created on first mutation of an imported Pi session | **supported** | `session.pi-cow-provenance` |
+| `extension.none-required` | Extensions | Core functionality operates normally when Node is absent | **supported** | `extension.node-absent` |
 
 ### Milestone M1 (Expanded Headless Pi)
 

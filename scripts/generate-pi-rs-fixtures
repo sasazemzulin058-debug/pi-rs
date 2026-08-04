@@ -26,6 +26,7 @@ def main():
         return 2
     cases = manifest.get("cases", {})
     invariant = [cid for cid in case_ids if cases.get(cid, {}).get("oracle") == "pi-rs-invariant"]
+    upstream_cases = [cid for cid in case_ids if cases.get(cid, {}).get("oracle") == "upstream-pi" and cases.get(cid, {}).get("captured", False)]
     upstream_pending = [cid for cid in case_ids if cases.get(cid, {}).get("oracle") == "upstream-pi" and not cases.get(cid, {}).get("captured", False)]
     if upstream_pending and not args.invariant_only:
         print("upstream cases pending capture; pass --invariant-only: " + ", ".join(upstream_pending), file=sys.stderr)
@@ -60,7 +61,7 @@ def main():
             print(detail, file=sys.stderr)
             return 1
 
-        expected = {f"{cid}.actual.json" for cid in invariant}
+        expected = {f"{cid}.actual.json" for cid in invariant + upstream_cases}
         produced = {p.name for p in Path(staging).iterdir() if p.is_file()}
         if produced != expected:
             print(f"invariant fixture set mismatch: expected {sorted(expected)}, got {sorted(produced)}", file=sys.stderr)
@@ -69,9 +70,9 @@ def main():
             shutil.copy2(Path(staging) / name, destination / name)
 
     if upstream_pending:
-        print(f"generated {len(invariant)} invariant fixture cases; upstream pending")
+        print(f"generated {len(invariant) + len(upstream_cases)} actual fixture cases; upstream pending")
         return 0 if args.invariant_only else 2
-    print(f"generated {len(invariant)} invariant fixture cases")
+    print(f"generated {len(invariant) + len(upstream_cases)} actual fixture cases")
     return 0
 
 
