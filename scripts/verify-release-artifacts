@@ -1,29 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-# Scripts/verify-release-artifacts
-# Helper script to verify release artifacts and SHA256 checksums in dist/ directory.
-
 DIST_DIR="${1:-dist}"
-
-if [ ! -d "$DIST_DIR" ]; then
-    echo "Error: dist directory not found at $DIST_DIR"
-    exit 1
-fi
-
-if [ ! -f "$DIST_DIR/SHA256SUMS" ]; then
-    echo "Error: SHA256SUMS not found in $DIST_DIR"
-    exit 1
-fi
-
+DIST_DIR="$(cd "$DIST_DIR" && pwd)"
 cd "$DIST_DIR"
-if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum -c SHA256SUMS
-elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 -c SHA256SUMS
-else
-    echo "Error: Neither sha256sum nor shasum is available"
-    exit 1
-fi
-
-echo "All release artifacts in $DIST_DIR verified successfully."
+[[ -f SHA256SUMS && -f release-manifest.json ]] || { echo "release metadata missing" >&2; exit 1; }
+python3 - "$DIST_DIR" <<'PY'
+import hashlib, json, os, pathlib, subprocess, sys, tarfile
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "release-manifest.json").read_text())
+artifacts = manifest.get("artifacts")
+expected = {f"pi-rs-{target}.tar.gz" for target in ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")}
+expected |= {f"release-sbom-{target}.spdx.json" for target in ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")}
+if set(artifacts or {}) != expected: raise SystemExit("manifest artifact set mismatch")
+for name, info in artifacts.items():
+    if pathlib.PurePath(name).name != name or not isinstance(info, dict): raise SystemExit("unsafe manifest entry")
+    path = root / name
+    if not path.is_file(): raise SystemExit(f"missing artifact: {name}")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if info.get("sha256") != digest or info.get("size") != path.stat().st_size: raise SystemExit(f"manifest mismatch: {name}")
+    if name.endswith(".tar.gz"):
+        target = name.removeprefix("pi-rs-").removesuffix(".tar.gz")
+        with tarfile.open(path, "r:gz") as archive:
+            members = archive.getmembers()
+            names = {m.name for m in members}
+            required = {f"pi-rs-{target}/pi-rs", f"pi-rs-{target}/README.md", f"pi-rs-{target}/LICENSE"}
+            if len(members) != 3 or names != required or any(not m.isfile() for m in members): raise SystemExit(f"archive contents mismatch: {name}")
+            binary = next(m for m in members if m.name.endswith("/pi-rs"))
+            if not binary.mode & 0o111: raise SystemExit(f"archive binary not executable: {name}")
+    else:
+        sbom = json.loads(path.read_text())
+        if sbom.get("spdxVersion") != "SPDX-2.3" or not sbom.get("packages"): raise SystemExit(f"invalid SBOM: {name}")
+sums = {}
+for line in (root / "SHA256SUMS").read_text().splitlines():
+    digest, name = line.split(None, 1); name = name.strip()
+    if name in sums or pathlib.PurePath(name).name != name: raise SystemExit("invalid checksum manifest")
+    sums[name] = digest
+if set(sums) != expected | {"release-manifest.json"}: raise SystemExit("checksum artifact set mismatch")
+for name, digest in sums.items():
+    if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest: raise SystemExit(f"checksum mismatch: {name}")
+print("Release artifacts verified.")
+PY
