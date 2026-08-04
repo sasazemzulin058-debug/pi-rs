@@ -128,7 +128,7 @@ jobs:
               sums[fname] = {'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
           with open('release-manifest.json', 'w', encoding='utf-8') as f:
               json.dump({'version': tag, 'artifacts': sums}, f, indent=2, sort_keys=True)
-              f.write('\\n')
+              f.write('\n')
           EOF
           sha256sum pi-rs-*.tar.gz release-sbom-*.spdx.json \
             release-manifest.json > SHA256SUMS
