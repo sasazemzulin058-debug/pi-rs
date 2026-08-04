@@ -7,11 +7,12 @@
     "lockfileSha256": "472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
   },
   "captureEnvironment": {
-    "captureStatus": "pending",
-    "host": null,
-    "nodeVersion": null,
-    "bunVersion": null,
-    "digest": null
+    "captureStatus": "completed",
+    "host": "x86_64",
+    "nodeVersion": "v24.18.0",
+    "bunVersion": "unknown",
+    "digest": "sha256:46f70608cc0e6b55272e9cf239c8c46e0735d1553dd62eeaeb8bdc234aaa7f98",
+    "capturedAt": "2026-08-04T07:30:19.983471+00:00"
   },
   "requiredCaseIds": {
     "M0": [],
@@ -57,19 +58,19 @@
   },
   "cases": {
     "cli.print.basic": {
-      "captured": false,
+      "captured": true,
       "description": "Headless --print prompt execution",
       "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "agent.serial-tool-loop": {
-      "captured": false,
+      "captured": true,
       "description": "Serial tool execution and cancellation",
       "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "provider.openai-chat.fragmented-sse": {
-      "captured": false,
+      "captured": true,
       "description": "OpenAI Chat Completions compatible SSE stream parsing",
       "normalizationAllowlist": [],
       "oracle": "upstream-pi"
@@ -81,25 +82,25 @@
       "oracle": "pi-rs-invariant"
     },
     "tool.read.bounds": {
-      "captured": false,
+      "captured": true,
       "description": "Bounded text read with 1-indexed offsets",
       "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "tool.bash.cancel-descendants": {
-      "captured": false,
+      "captured": true,
       "description": "Shell execution, process-group cancellation and reaping",
       "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "resource.context-precedence": {
-      "captured": false,
+      "captured": true,
       "description": "Global/current AGENTS.md or CLAUDE.md context precedence",
       "normalizationAllowlist": [],
       "oracle": "upstream-pi"
     },
     "resource.untrusted-project": {
-      "captured": false,
+      "captured": true,
       "description": "Trust decision data model without loading project resources",
       "normalizationAllowlist": [],
       "oracle": "upstream-pi"
