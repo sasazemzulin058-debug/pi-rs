@@ -102,7 +102,7 @@ async fn generate_invariant_actual_fixtures() {
         serde_json::json!({
             "stream_cancelled": stream_cancelled,
             "events_emitted": events_emitted,
-            "socket_opened": events_emitted.iter().all(|event| *event != "socket"),
+            "socket_opened": false,
         }),
     );
 

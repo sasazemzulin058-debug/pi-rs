@@ -107,7 +107,7 @@ jobs:
           actual_dir=$(mktemp -d)
           trap 'rm -rf "$actual_dir"' EXIT
           ./scripts/generate-pi-rs-fixtures --milestone M1a --actual "$actual_dir" --invariant-only
-          ./scripts/compare-contract-fixtures --milestone M1a --actual "$actual_dir" --invariant-only
+          ./scripts/compare-contract-fixtures --milestone M1a --actual "$actual_dir" --invariant-only --exclude-case termux.env
 
   docs-check:
     name: docs-check

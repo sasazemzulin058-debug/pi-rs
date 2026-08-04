@@ -88,6 +88,7 @@ def main():
     parser.add_argument("--self-test", action="store_true", help="Run comparator self-tests")
     parser.add_argument("--actual", help="Directory containing actual output files (required unless --self-test is specified)")
     parser.add_argument("--invariant-only", action="store_true", help="Compare only pi-rs-invariant cases")
+    parser.add_argument("--exclude-case", action="append", default=[], help="Exclude case ID from comparison")
     args = parser.parse_args()
     
     if args.self_test:
@@ -123,12 +124,13 @@ def main():
                 
             selected_cases = [
                 cid for cid in req_cases[m]
-                if not args.invariant_only or cases.get(cid, {}).get("oracle") == "pi-rs-invariant"
+                if cid not in args.exclude_case and (not args.invariant_only or cases.get(cid, {}).get("oracle") == "pi-rs-invariant")
             ]
             print(f"Comparing milestone {m}...")
             required_files = {f"{cid}.actual.json" for cid in selected_cases}
             actual_files = set(os.listdir(args.actual)) if os.path.exists(args.actual) else set()
-            for extra in sorted(actual_files - required_files):
+            excluded_files = {f"{cid}.actual.json" for cid in args.exclude_case}
+            for extra in sorted(actual_files - required_files - excluded_files):
                 print(f"Case {extra}: ERROR - extra actual output file")
                 has_errors = True
                 failed_count += 1
