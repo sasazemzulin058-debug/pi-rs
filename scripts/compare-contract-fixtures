@@ -3,7 +3,13 @@ import sys
 import os
 import argparse
 import json
-from contract_fixture_lib import load_manifest, compare_structures
+from contract_fixture_lib import (
+    canonical_json_sha256,
+    compare_structures,
+    load_manifest,
+    validate_expected_envelope,
+    validate_manifest,
+)
 
 def run_self_test():
     print("Running comparator self-test...")
@@ -95,6 +101,11 @@ def main():
         
     try:
         manifest = load_manifest()
+        manifest_errors = validate_manifest(manifest)
+        if manifest_errors:
+            for error in manifest_errors:
+                print(f"Manifest error: {error}")
+            sys.exit(2)
         req_cases = manifest.get("requiredCaseIds", {})
         cases = manifest.get("cases", {})
         
@@ -121,7 +132,11 @@ def main():
                 print(f"Case {extra}: ERROR - extra actual output file")
                 has_errors = True
                 failed_count += 1
+            missing_cases = {name[:-12] for name in required_files - actual_files}
             for missing in sorted(required_files - actual_files):
+                case_id = missing[:-12]
+                if cases.get(case_id, {}).get("oracle") == "upstream-pi" and not cases.get(case_id, {}).get("captured", False):
+                    continue
                 print(f"Case {missing}: ERROR - actual output file missing")
                 has_errors = True
                 failed_count += 1
@@ -130,12 +145,6 @@ def main():
                 oracle = case_info.get("oracle")
                 captured = case_info.get("captured", False)
                 
-                if oracle == "upstream-pi" and not captured:
-                    print(f"Case {case_id}: REJECTED - required upstream case is pending capture")
-                    has_errors = True
-                    failed_count += 1
-                    continue
-                    
                 fixture_dir = os.path.join(
                     os.path.dirname(os.path.dirname(__file__)),
                     "fixtures", "upstream-pi"
@@ -146,13 +155,17 @@ def main():
                 if not os.path.exists(expected_file):
                     print(f"Case {case_id}: ERROR - expected fixture file missing at {expected_file}")
                     has_errors = True
+                    failed_count += 1
                     continue
-                    
-                if not os.path.exists(actual_file):
-                    print(f"Case {case_id}: ERROR - actual output file missing at {actual_file}")
+
+                if oracle == "upstream-pi" and not captured:
+                    print(f"Case {case_id}: REJECTED - required upstream case is pending capture")
                     has_errors = True
+                    skipped_count += 1
                     continue
-                    
+                if case_id in missing_cases:
+                    continue
+
                 try:
                     with open(expected_file, 'r', encoding='utf-8') as f:
                         expected_data = json.load(f)
@@ -161,21 +174,36 @@ def main():
                 except Exception as e:
                     print(f"Case {case_id}: ERROR - failed to load JSON files: {e}")
                     has_errors = True
+                    failed_count += 1
                     continue
                     
+                hash_file = os.path.join(fixture_dir, f"{case_id}.raw-hash.txt")
+                if not os.path.exists(hash_file):
+                    print(f"Case {case_id}: ERROR - raw-hash.txt missing at {hash_file}")
+                    has_errors = True
+                    failed_count += 1
+                    continue
+                actual_hash = canonical_json_sha256(expected_data)
+                with open(hash_file, 'r', encoding='utf-8') as hf:
+                    expected_hash = hf.read().strip()
+                if actual_hash != expected_hash:
+                    print(f"Case {case_id}: ERROR - raw-hash.txt mismatch (expected {expected_hash}, got {actual_hash})")
+                    has_errors = True
+                    failed_count += 1
+                    continue
+
                 if oracle == "pi-rs-invariant":
-                    if expected_data.get("case_id") != case_id or expected_data.get("oracle") != oracle:
-                        print(f"Case {case_id}: ERROR - expected envelope metadata mismatch")
+                    envelope_error = validate_expected_envelope(expected_data, case_id, oracle)
+                    if envelope_error:
+                        print(f"Case {case_id}: ERROR - {envelope_error}")
                         has_errors = True
                         failed_count += 1
                         continue
-                    expected_data = expected_data.get("expected")
-                    if not isinstance(expected_data, dict):
-                        print(f"Case {case_id}: ERROR - expected invariant payload missing")
-                        has_errors = True
-                        failed_count += 1
-                        continue
-                diff = compare_structures(expected_data, actual_data)
+                    expected_payload = expected_data.get("expected")
+
+                    expected_data = expected_payload
+                norm_allowlist = case_info.get("normalizationAllowlist", [])
+                diff = compare_structures(expected_data, actual_data, allowlist=norm_allowlist)
                 if diff:
                     print(f"Case {case_id}: FAILED")
                     print(diff)

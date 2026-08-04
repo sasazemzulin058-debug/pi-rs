@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import hashlib
 
 MANIFEST_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
@@ -18,6 +19,18 @@ def load_manifest(manifest_path=MANIFEST_PATH):
     with open(manifest_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+def canonical_json_sha256(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode("utf-8")).hexdigest()
+
+def validate_expected_envelope(value, case_id, oracle):
+    if not isinstance(value, dict) or set(value) != {"case_id", "oracle", "expected"}:
+        return "expected envelope must contain exactly case_id, oracle and expected"
+    if value["case_id"] != case_id or value["oracle"] != oracle:
+        return "expected envelope metadata mismatch"
+    if not isinstance(value["expected"], dict):
+        return "expected envelope payload must be an object"
+    return None
+
 def is_placeholder_sha(sha):
     # A SHA is a placeholder if all characters are identical (like 00000... or 11111...)
     # or if it starts with typical mock values like "123456"
@@ -30,6 +43,12 @@ def is_placeholder_sha(sha):
 def validate_manifest(manifest, milestone=None):
     errors = []
     
+    # Allowlist normalization: ensure keys are in expected insertion order and no unexpected keys
+    allowed_top_keys = {"schemaVersion", "reference", "captureEnvironment", "requiredCaseIds", "cases"}
+    extra_top_keys = set(manifest.keys()) - allowed_top_keys
+    if extra_top_keys:
+        errors.append(f"Unexpected top-level keys in manifest: {sorted(extra_top_keys)}")
+
     # 1. Check schemaVersion
     if "schemaVersion" not in manifest:
         errors.append("Missing schemaVersion")
@@ -116,7 +135,7 @@ def validate_manifest(manifest, milestone=None):
             for cid in case_list:
                 if cid in all_required_case_ids:
                     errors.append(f"Duplicate required case ID: {cid}")
-                all_required_case_ids.add(cid) if hasattr(all_required_case_ids, 'add') else all_required_case_ids.append(cid)
+                all_required_case_ids.append(cid)
                 
     # 5. Check cases catalog
     cases_catalog = manifest.get("cases", {})
@@ -159,6 +178,16 @@ def validate_manifest(manifest, milestone=None):
             if not desc:
                 errors.append(f"Case {cid} missing description")
 
+            norm_allow = case_info.get("normalizationAllowlist")
+            if norm_allow is None:
+                errors.append(f"Case {cid} missing normalizationAllowlist")
+            elif not isinstance(norm_allow, list):
+                errors.append(f"Case {cid} normalizationAllowlist must be a list")
+            else:
+                for ptr in norm_allow:
+                    if not isinstance(ptr, str) or (ptr != "" and not ptr.startswith("/")):
+                        errors.append(f"Case {cid} normalizationAllowlist item must be a JSON pointer starting with '/', got: {ptr}")
+
     # 6. Check uncaptured cases for specified milestone
     if milestone and milestone != "M0":
         if req_cases and cases_catalog:
@@ -172,32 +201,37 @@ def validate_manifest(manifest, milestone=None):
                         
     return errors
 
-def normalize_structure(obj, path=""):
+def normalize_structure(obj, allowlist=None, path=""):
     if isinstance(obj, dict):
         res = {}
         for k, v in obj.items():
-            if k in ["created_at", "timestamp", "created", "updated_at"]:
-                if isinstance(v, str) and ISO_DATE_RE.match(v):
-                    res[k] = "1970-01-01T00:00:00.000Z"
+            k_escaped = k.replace("~", "~0").replace("/", "~1")
+            sub_path = f"{path}/{k_escaped}"
+            if allowlist is None or sub_path in allowlist:
+                if k in ["created_at", "timestamp", "created", "updated_at"]:
+                    if isinstance(v, str) and ISO_DATE_RE.match(v):
+                        res[k] = "1970-01-01T00:00:00.000Z"
+                    else:
+                        res[k] = v
+                elif k in ["session_id", "uuid", "request_id"]:
+                    if isinstance(v, str) and UUID_RE.match(v):
+                        res[k] = "00000000-0000-0000-0000-000000000000"
+                    else:
+                        res[k] = v
+                elif k in ["temp_path", "temp_dir", "path"]:
+                    if isinstance(v, str):
+                        v_norm = re.sub(r'/data/data/com\.termux/files/usr/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v)
+                        v_norm = re.sub(r'/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v_norm)
+                        res[k] = v_norm
+                    else:
+                        res[k] = v
                 else:
-                    res[k] = v
-            elif k in ["session_id", "uuid", "request_id"]:
-                if isinstance(v, str) and UUID_RE.match(v):
-                    res[k] = "00000000-0000-0000-0000-000000000000"
-                else:
-                    res[k] = v
-            elif k in ["temp_path", "temp_dir", "path"]:
-                if isinstance(v, str):
-                    v_norm = re.sub(r'/data/data/com\.termux/files/usr/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v)
-                    v_norm = re.sub(r'/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v_norm)
-                    res[k] = v_norm
-                else:
-                    res[k] = v
+                    res[k] = normalize_structure(v, allowlist, sub_path)
             else:
-                res[k] = normalize_structure(v, f"{path}/{k}")
+                res[k] = normalize_structure(v, allowlist, sub_path)
         return res
     elif isinstance(obj, list):
-        return [normalize_structure(item, f"{path}/{idx}") for idx, item in enumerate(obj)]
+        return [normalize_structure(item, allowlist, f"{path}/{idx}") for idx, item in enumerate(obj)]
     return obj
 
 def get_json_pointer_diffs(expected, actual, path=""):
@@ -226,9 +260,9 @@ def get_json_pointer_diffs(expected, actual, path=""):
             diffs.append((path, f"value mismatch: expected {expected}, got {actual}"))
     return diffs
 
-def compare_structures(expected, actual):
-    norm_expected = normalize_structure(expected)
-    norm_actual = normalize_structure(actual)
+def compare_structures(expected, actual, allowlist=None):
+    norm_expected = normalize_structure(expected, allowlist=allowlist)
+    norm_actual = normalize_structure(actual, allowlist=allowlist)
     diffs = get_json_pointer_diffs(norm_expected, norm_actual)
     if not diffs:
         return None
