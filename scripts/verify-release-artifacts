@@ -8,6 +8,9 @@ python3 - "$DIST_DIR" <<'PY'
 import hashlib, json, os, pathlib, subprocess, sys, tarfile
 root = pathlib.Path(sys.argv[1])
 manifest = json.loads((root / "release-manifest.json").read_text())
+expected_version = os.environ.get("RELEASE_TAG")
+if expected_version and manifest.get("version") != expected_version:
+    raise SystemExit("release manifest version mismatch")
 artifacts = manifest.get("artifacts")
 expected = {f"pi-rs-{target}.tar.gz" for target in ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")}
 expected |= {f"release-sbom-{target}.spdx.json" for target in ("aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu")}

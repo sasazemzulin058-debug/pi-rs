@@ -25,10 +25,11 @@ class TestReleaseArtifacts(unittest.TestCase):
             artifacts = {}
             for path in sorted(dist.iterdir()):
                 artifacts[path.name] = {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size}
-            (dist / "release-manifest.json").write_text(json.dumps({"version": "v1.2.0", "artifacts": artifacts}))
+            (dist / "release-manifest.json").write_text(json.dumps({"version": "v0.83.0", "artifacts": artifacts}))
             artifacts["release-manifest.json"] = {"sha256": hashlib.sha256((dist / "release-manifest.json").read_bytes()).hexdigest(), "size": (dist / "release-manifest.json").stat().st_size}
             (dist / "SHA256SUMS").write_text("\n".join(f"{info['sha256']}  {name}" for name, info in sorted(artifacts.items())))
-            result = subprocess.run([str(ROOT / "scripts/verify-release-artifacts"), str(dist)], capture_output=True, text=True)
+            env = {**__import__("os").environ, "RELEASE_TAG": "v0.83.0"}
+            result = subprocess.run([str(ROOT / "scripts/verify-release-artifacts"), str(dist)], capture_output=True, text=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
 
 

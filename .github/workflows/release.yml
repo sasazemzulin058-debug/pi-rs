@@ -133,6 +133,8 @@ jobs:
           sha256sum pi-rs-*.tar.gz release-sbom-*.spdx.json \
             release-manifest.json > SHA256SUMS
       - name: Verify release artifacts checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: ./scripts/verify-release-artifacts dist
       - name: Generate provenance attestation
         # v2

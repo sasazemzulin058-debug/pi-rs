@@ -46,7 +46,7 @@ for crate in $CRATES; do
         fi
     fi
 
-    # Check internal dependencies in crate Cargo.toml (e.g. pi-ai = { ..., version = "1.2.0" })
+    # Check internal dependencies in crate Cargo.toml (e.g. pi-ai = { ..., version = "0.83.0" })
     DEP_VERS=$(grep -E 'pi-(ai|agent|coding-agent).*version = "' "$crate" | cut -d '"' -f4 || true)
     for dv in $DEP_VERS; do
         if [ "$dv" != "$WS_VERSION" ]; then

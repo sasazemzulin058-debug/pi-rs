@@ -16,8 +16,8 @@ name = "pi-rs"
 path = "src/main.rs"
 
 [dependencies]
-pi-ai = { path = "../pi-ai", version = "1.2.0" }
-pi-agent = { path = "../pi-agent", version = "1.2.0" }
+pi-ai = { path = "../pi-ai", version = "0.83.0" }
+pi-agent = { path = "../pi-agent", version = "0.83.0" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 serde = { workspace = true }

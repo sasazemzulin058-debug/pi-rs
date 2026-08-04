@@ -18,7 +18,7 @@ OpenAI-compatible endpoint.
 
 ```
 pi/
-├─ Cargo.toml                       # workspace, version 1.2.0, MSRV 1.80
+├─ Cargo.toml                       # workspace, version 0.83.0, MSRV 1.80
 └─ crates/
    ├─ pi-ai/                        # ←→ packages/ai
    ├─ pi-agent/                     # ←→ packages/agent

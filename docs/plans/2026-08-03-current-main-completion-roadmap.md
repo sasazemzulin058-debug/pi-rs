@@ -10,7 +10,7 @@
 
 - **Repository:** `/data/data/com.termux/files/home/pi-rs-main-audit`
 - **Baseline commit:** `fb9be6796b9e1d99bd0fd79cf24e0d754d163541`
-- **Workspace version:** `1.2.0`
+- **Workspace version:** `0.83.0`
 - **Rust MSRV:** `1.80`
 - **Workspace crates:**
   - `crates/pi-ai`
@@ -29,7 +29,7 @@
 
 | Surface | Current evidence | Current status |
 |---|---|---|
-| Workspace and package structure | `Cargo.toml`; three workspace members at version `1.2.0` | **implemented** |
+| Workspace and package structure | `Cargo.toml`; three workspace members at version `0.83.0` | **implemented** |
 | Anthropic, OpenAI Chat, OpenAI Responses and Google provider modules | `crates/pi-ai/src/providers/` | **partial; provider modules exist, CLI routing/parity incomplete** |
 | SSE streaming and retry infrastructure | `crates/pi-ai/src/providers/openai.rs`, `crates/pi-ai/src/retry.rs` | **partial** |
 | Serial agent/tool loop | `crates/pi-agent/src/agent_loop.rs` | **implemented serially; queues/events parity unsupported** |
