@@ -53,12 +53,13 @@ pub enum SessionEntry {
     },
     CustomMessage {
         custom_type: String,
-        message: Message,
+        content: serde_json::Value,
+        details: Option<serde_json::Value>,
         display: bool,
     },
     Label {
         target_id: String,
-        label: String,
+        label: Option<String>,
     },
     SessionInfo {
         name: Option<String>,
@@ -187,35 +188,43 @@ impl<'de> Deserialize<'de> for SessionEntry {
                 }
             }
             "custom_message" | "custom-message" => {
-                if let Some(ct) = val
+                let custom_type = val
                     .get("customType")
                     .or_else(|| val.get("key"))
-                    .and_then(|v| v.as_str())
-                {
+                    .and_then(|v| v.as_str());
+                if let Some(ct) = custom_type {
                     if !ct.is_empty() {
-                        let msg_val = val.get("message").cloned().unwrap_or_else(|| val.clone());
-                        if let Ok(msg) = serde_json::from_value::<Message>(msg_val) {
-                            let display =
-                                val.get("display").and_then(|v| v.as_bool()).unwrap_or(true);
-                            return Ok(SessionEntry::CustomMessage {
-                                custom_type: ct.into(),
-                                message: msg,
-                                display,
-                            });
-                        }
+                        let content = if let Some(c) = val.get("content") {
+                            c.clone()
+                        } else if let Some(m) = val.get("message") {
+                            m.get("content").cloned().unwrap_or(m.clone())
+                        } else {
+                            val.clone()
+                        };
+                        let details = val.get("details").cloned();
+                        let display = val.get("display").and_then(|v| v.as_bool()).unwrap_or(true);
+                        return Ok(SessionEntry::CustomMessage {
+                            custom_type: ct.into(),
+                            content,
+                            details,
+                            display,
+                        });
                     }
                 }
             }
             "label" => {
-                let label = val.get("label").and_then(|v| v.as_str());
+                let label = val
+                    .get("label")
+                    .and_then(|v| if v.is_null() { None } else { v.as_str() })
+                    .map(str::to_owned);
                 let target_id = val
                     .get("targetId")
                     .or_else(|| val.get("target_id"))
                     .and_then(|v| v.as_str());
-                if let (Some(lbl), Some(tid)) = (label, target_id) {
-                    if !lbl.is_empty() && !tid.is_empty() {
+                if let Some(tid) = target_id {
+                    if !tid.is_empty() {
                         return Ok(SessionEntry::Label {
-                            label: lbl.into(),
+                            label,
                             target_id: tid.into(),
                         });
                     }
@@ -298,21 +307,31 @@ impl Serialize for SessionEntry {
             .serialize(serializer),
             SessionEntry::CustomMessage {
                 custom_type,
-                message,
+                content,
+                details,
                 display,
-            } => serde_json::json!({
-                "type": "custom_message",
-                "customType": custom_type,
-                "message": message,
-                "display": display,
-            })
-            .serialize(serializer),
-            SessionEntry::Label { label, target_id } => serde_json::json!({
-                "type": "label",
-                "targetId": target_id,
-                "label": label,
-            })
-            .serialize(serializer),
+            } => {
+                let mut v = serde_json::json!({
+                    "type": "custom_message",
+                    "customType": custom_type,
+                    "content": content,
+                    "display": display,
+                });
+                if let Some(d) = details {
+                    v["details"] = d.clone();
+                }
+                v.serialize(serializer)
+            }
+            SessionEntry::Label { label, target_id } => {
+                let mut v = serde_json::json!({
+                    "type": "label",
+                    "targetId": target_id,
+                });
+                if let Some(lbl) = label {
+                    v["label"] = serde_json::json!(lbl);
+                }
+                v.serialize(serializer)
+            }
             SessionEntry::SessionInfo { name, info } => {
                 let mut v = serde_json::json!({
                     "type": "session_info",
@@ -421,6 +440,16 @@ impl SessionTree {
     }
 
     /// Convert existing linear Session persistence into native tree form.
+    pub fn cow_from_imported(imported: &SessionTree) -> Self {
+        let mut cow = imported.clone();
+        let now = pi_ai::now_ms();
+        cow.metadata.source_session_id = cow.metadata.session_id.clone();
+        cow.metadata.session_id = Some(new_id());
+        cow.metadata.created_ms = Some(now);
+        cow.metadata.updated_ms = Some(now);
+        cow
+    }
+
     pub fn from_session(session: &Session) -> anyhow::Result<Self> {
         let mut tree = Self::new();
         tree.metadata = SessionTreeMetadata {
@@ -463,6 +492,91 @@ impl SessionTree {
 
     pub fn active_leaf(&self) -> Option<&str> {
         self.active_leaf.as_deref()
+    }
+
+    pub fn is_leaf(&self, entry_id: &str) -> bool {
+        self.index
+            .get(entry_id)
+            .and_then(|&i| self.nodes.get(i))
+            .is_some_and(|node| node.children.is_empty())
+    }
+
+    pub fn active_path(&self) -> anyhow::Result<Vec<&SessionTreeNode>> {
+        let leaf_id = match &self.active_leaf {
+            Some(id) => id.as_str(),
+            None => return Ok(Vec::new()),
+        };
+        let mut path = Vec::new();
+        let mut current = Some(leaf_id);
+        while let Some(id) = current {
+            let idx = *self
+                .index
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("unknown entry: {id}"))?;
+            let node = &self.nodes[idx];
+            path.push(node);
+            current = node.parent_id.as_deref();
+        }
+        path.reverse();
+        Ok(path)
+    }
+
+    pub fn save_active_branch_jsonl(&self, path: &Path) -> anyhow::Result<()> {
+        let leaf_id = self
+            .active_leaf
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("no active leaf in tree"))?;
+        anyhow::ensure!(
+            self.is_leaf(leaf_id),
+            "cannot save non-leaf active entry '{leaf_id}': active branch saving requires a leaf entry"
+        );
+
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("tree path has no parent"))?;
+        ensure_private_dir(parent)?;
+        let _lock = lock_session(path)?;
+        let mut file = std::fs::File::create(path)?;
+
+        let now_iso = format_iso_timestamp(pi_ai::now_ms());
+        let session_id = self
+            .metadata
+            .session_id
+            .clone()
+            .or_else(|| path.file_stem().and_then(|s| s.to_str()).map(str::to_owned))
+            .unwrap_or_else(|| "session".into());
+
+        let header_json = serde_json::json!({
+            "type": "session",
+            "version": TREE_SCHEMA_VERSION,
+            "id": session_id,
+            "timestamp": now_iso,
+            "cwd": self.metadata.cwd.as_deref().unwrap_or("/"),
+            "active_leaf": leaf_id,
+            "model": self.metadata.model,
+            "provider": self.metadata.provider,
+            "parentSession": self.metadata.source_session_id,
+        });
+        writeln!(file, "{}", serde_json::to_string(&header_json)?)?;
+
+        for node in self.active_path()? {
+            let timestamp = node.timestamp_str.clone().unwrap_or_else(|| {
+                let ms = node.timestamp_ms.unwrap_or_else(pi_ai::now_ms);
+                format_iso_timestamp(ms)
+            });
+            let mut entry_val = serde_json::to_value(&node.entry)?;
+            if let Some(obj) = entry_val.as_object_mut() {
+                obj.insert("id".into(), serde_json::json!(node.entry_id));
+                obj.insert("parentId".into(), serde_json::json!(node.parent_id));
+                obj.insert("timestamp".into(), serde_json::json!(timestamp));
+                if let Some(source_id) = &node.source_entry_id {
+                    obj.insert("source_entry_id".into(), serde_json::json!(source_id));
+                }
+            }
+            writeln!(file, "{}", serde_json::to_string(&entry_val)?)?;
+        }
+        file.sync_all()?;
+        Ok(())
     }
 
     pub fn nodes(&self) -> impl Iterator<Item = &SessionTreeNode> {
@@ -672,7 +786,20 @@ impl SessionTree {
         for entry in self.effective_context(leaf_id)? {
             match entry {
                 SessionEntry::Message { message } => messages.push(message.clone()),
-                SessionEntry::CustomMessage { message, .. } => messages.push(message.clone()),
+                SessionEntry::CustomMessage { content, .. } => {
+                    if let Ok(msg) = serde_json::from_value::<Message>(content.clone()) {
+                        messages.push(msg);
+                    } else if let Some(text) = content.as_str() {
+                        messages.push(Message::user_text(text));
+                    } else if let Ok(items) =
+                        serde_json::from_value::<Vec<pi_ai::Content>>(content.clone())
+                    {
+                        messages.push(Message::User {
+                            content: items,
+                            timestamp: pi_ai::now_ms(),
+                        });
+                    }
+                }
                 SessionEntry::Compaction { summary, .. } => {
                     messages.push(Message::user_text(format!("Compaction Summary: {summary}")));
                 }
@@ -1500,6 +1627,7 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
     let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut tree = SessionTree::new();
     let mut parent: Option<String> = None;
+    let mut explicit_active_leaf = None;
     for (line_no, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
@@ -1537,8 +1665,7 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
                 .or_else(|| value.get("activeLeaf"))
                 .and_then(|v| v.as_str())
             {
-                tree.set_active_leaf(leaf)
-                    .with_context(|| format!("invalid active leaf on line {}", line_no + 1))?;
+                explicit_active_leaf = Some(leaf.to_string());
             }
             continue;
         }
@@ -1688,36 +1815,47 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
                     .get("customType")
                     .or_else(|| value.get("key"))
                     .and_then(|v| v.as_str());
-                let msg_val = value
-                    .get("message")
-                    .cloned()
-                    .unwrap_or_else(|| value.clone());
-                let msg = serde_json::from_value::<Message>(msg_val);
-                match (custom_type, msg) {
-                    (Some(ct), Ok(m)) if !ct.is_empty() => SessionEntry::CustomMessage {
-                        custom_type: ct.into(),
-                        message: m,
-                        display: value
+                if let Some(ct) = custom_type {
+                    if !ct.is_empty() {
+                        let content = if let Some(c) = value.get("content") {
+                            c.clone()
+                        } else if let Some(m) = value.get("message") {
+                            m.get("content").cloned().unwrap_or(m.clone())
+                        } else {
+                            value.clone()
+                        };
+                        let details = value.get("details").cloned();
+                        let display = value
                             .get("display")
                             .and_then(|v| v.as_bool())
-                            .unwrap_or(true),
-                    },
-                    _ => SessionEntry::Unknown { raw: value.clone() },
+                            .unwrap_or(true);
+                        SessionEntry::CustomMessage {
+                            custom_type: ct.into(),
+                            content,
+                            details,
+                            display,
+                        }
+                    } else {
+                        SessionEntry::Unknown { raw: value.clone() }
+                    }
+                } else {
+                    SessionEntry::Unknown { raw: value.clone() }
                 }
             }
             "label" => {
-                let label = value.get("label").and_then(|v| v.as_str());
+                let label = value
+                    .get("label")
+                    .and_then(|v| if v.is_null() { None } else { v.as_str() })
+                    .map(str::to_owned);
                 let target_id = value
                     .get("targetId")
                     .or_else(|| value.get("target_id"))
                     .and_then(|v| v.as_str());
-                match (label, target_id) {
-                    (Some(lbl), Some(tid)) if !lbl.is_empty() && !tid.is_empty() => {
-                        SessionEntry::Label {
-                            label: lbl.into(),
-                            target_id: tid.into(),
-                        }
-                    }
+                match target_id {
+                    Some(tid) if !tid.is_empty() => SessionEntry::Label {
+                        label,
+                        target_id: tid.into(),
+                    },
                     _ => SessionEntry::Unknown { raw: value.clone() },
                 }
             }
@@ -1737,6 +1875,12 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
             node.timestamp_str = timestamp_str;
         }
         parent = Some(entry_id);
+    }
+    if let Some(leaf) = explicit_active_leaf {
+        tree.set_active_leaf(&leaf)
+            .with_context(|| format!("invalid active leaf: {leaf}"))?;
+    } else if tree.active_leaf.is_none() {
+        tree.active_leaf = parent;
     }
     Ok(tree)
 }

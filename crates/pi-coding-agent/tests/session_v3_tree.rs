@@ -198,12 +198,50 @@ fn active_leaf_import_fail_closed_on_invalid_id() {
     std::fs::write(
         &path,
         concat!(
-            r#"{"type":"session","id":"s1","active_leaf":"nonexistent-node"}"#, "\n",
+            r#"{"type":"session","id":"s1","activeLeaf":"nonexistent-node"}"#, "\n",
             r#"{"type":"message","id":"e0","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}"#, "\n",
+            r#"{"type":"session_info","name":"info"}"#, "\n",
         ),
     )
     .unwrap();
     assert!(session::import_pi_session_as_tree(&path).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn cow_from_imported_preserves_tree_structure_and_provenance() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-cow-{}", std::process::id()));
+    let path = dir.join("imported.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","version":3,"id":"src-123","model":"m1","provider":"p1"}"#, "\n",
+            r#"{"type":"message","id":"e0","message":{"role":"user","content":[{"type":"text","text":"msg0"}]}}"#, "\n",
+            r#"{"type":"message","id":"e1","parentId":"e0","message":{"role":"user","content":[{"type":"text","text":"msg1"}]}}"#, "\n",
+        ),
+    )
+    .unwrap();
+
+    let imported = session::import_pi_session_as_tree(&path).unwrap();
+    let cow = SessionTree::cow_from_imported(&imported);
+
+    assert_ne!(cow.metadata.session_id, imported.metadata.session_id);
+    assert_eq!(cow.metadata.source_session_id.as_deref(), Some("src-123"));
+    assert_eq!(cow.active_leaf(), imported.active_leaf());
+    assert_eq!(cow.nodes().count(), imported.nodes().count());
+
+    let imported_nodes: Vec<_> = imported.nodes().collect();
+    let cow_nodes: Vec<_> = cow.nodes().collect();
+    assert_eq!(imported_nodes.len(), cow_nodes.len());
+    for (orig, copy) in imported_nodes.iter().zip(cow_nodes.iter()) {
+        assert_eq!(orig.entry_id, copy.entry_id);
+        assert_eq!(orig.parent_id, copy.parent_id);
+        assert_eq!(orig.source_entry_id, copy.source_entry_id);
+        assert_eq!(orig.timestamp_ms, copy.timestamp_ms);
+        assert_eq!(orig.timestamp_str, copy.timestamp_str);
+    }
+
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -213,6 +251,74 @@ fn timestamp_parsing_safe_on_out_of_bounds_or_malformed() {
     assert_eq!(session::parse_iso_timestamp("2026-08-10T12:00"), None);
     assert_eq!(session::parse_iso_timestamp("XXXX-08-10T12:00:00Z"), None);
     assert!(session::parse_iso_timestamp("2026-08-10T12:00:00Z").is_some());
+}
+
+#[test]
+fn custom_message_wire_schema_supports_content_details_display_and_message_projection() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-cm-{}", std::process::id()));
+    let path = dir.join("custom_msg.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","id":"cm-session"}"#, "\n",
+            r#"{"type":"custom_message","id":"cm1","customType":"test-ext","content":"injected context","details":{"foo":"bar"},"display":true}"#, "\n",
+        ),
+    )
+    .unwrap();
+
+    let tree = session::import_pi_session_as_tree(&path).unwrap();
+    let leaf = tree.active_leaf().unwrap();
+    let msgs = tree.effective_messages(leaf).unwrap();
+    assert_eq!(msgs.len(), 1);
+
+    let saved_path = dir.join("saved_cm.jsonl");
+    save_tree_jsonl(&saved_path, &tree).unwrap();
+    let raw = std::fs::read_to_string(&saved_path).unwrap();
+    assert!(raw.contains(r#""customType":"test-ext""#));
+    assert!(raw.contains(r#""content":"injected context""#));
+    assert!(raw.contains(r#""details":{"foo":"bar"}"#));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn label_clear_record_preservation_and_non_leaf_save_rejection() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-label-{}", std::process::id()));
+    let path = dir.join("label_clear.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","id":"lbl-session"}"#, "\n",
+            r#"{"type":"message","id":"m1","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}"#, "\n",
+            r#"{"type":"label","id":"l1","parentId":"m1","targetId":"m1","label":"checkpoint"}"#, "\n",
+            r#"{"type":"label","id":"l2","parentId":"l1","targetId":"m1","label":null}"#, "\n",
+            r#"{"type":"message","id":"m2","parentId":"l2","message":{"role":"user","content":[{"type":"text","text":"world"}]}}"#, "\n",
+        ),
+    )
+    .unwrap();
+
+    let mut tree = session::import_pi_session_as_tree(&path).unwrap();
+    let nodes: Vec<_> = tree.nodes().collect();
+    assert_eq!(nodes.len(), 4);
+    assert!(matches!(
+        &nodes[2].entry,
+        SessionEntry::Label { label: None, ref target_id } if target_id == "m1"
+    ));
+
+    // Test non-leaf active save rejection
+    tree.set_active_leaf("m1").unwrap();
+    let active_path = dir.join("active_branch.jsonl");
+    assert!(tree.save_active_branch_jsonl(&active_path).is_err());
+
+    // Switch back to leaf and verify active branch save emits correct ancestor path
+    tree.set_active_leaf("m2").unwrap();
+    tree.save_active_branch_jsonl(&active_path).unwrap();
+    let active_tree = load_tree_jsonl(&active_path).unwrap();
+    assert_eq!(active_tree.nodes().count(), 4);
+
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
