@@ -1021,6 +1021,7 @@ dependencies = [
  "clap",
  "dirs",
  "futures",
+ "libc",
  "pi-agent",
  "pi-ai",
  "serde",

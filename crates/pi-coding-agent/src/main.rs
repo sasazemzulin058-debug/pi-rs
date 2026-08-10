@@ -13,6 +13,9 @@ mod rpc;
 #[allow(dead_code)]
 mod session;
 mod system_prompt;
+// ponytail: U6 reducer and terminal guard unexposed until REPL rendering wired.
+#[allow(dead_code)]
+mod tui;
 // ponytail: Termux helpers are exercised by unit tests before CLI startup wiring.
 #[allow(dead_code)]
 mod termux;
