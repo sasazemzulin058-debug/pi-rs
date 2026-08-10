@@ -1,6 +1,9 @@
 //! `pi-rs` — interactive coding agent CLI.
 
 mod config;
+// ponytail: extension module provides fail-closed diagnostic for unsupported dynamic TS/JS extensions.
+#[allow(dead_code)]
+mod extension;
 mod file_config;
 mod interactive;
 mod permission;
