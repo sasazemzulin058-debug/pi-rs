@@ -154,7 +154,7 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
                     .content
                     .iter()
                     .map(|c| match c {
-                        Content::Text { text } => json!({"type": "text", "text": text}),
+                        Content::Text { text, .. } => json!({"type": "text", "text": text}),
                         Content::Image { data, mime_type } => json!({
                             "type": "image",
                             "source": {"type": "base64", "media_type": mime_type, "data": data}
@@ -179,10 +179,11 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
 
 fn content_to_block(c: &Content) -> Value {
     match c {
-        Content::Text { text } => json!({"type": "text", "text": text}),
+        Content::Text { text, .. } => json!({"type": "text", "text": text}),
         Content::Thinking {
             thinking,
             thinking_signature,
+            ..
         } => {
             let mut v = json!({"type": "thinking", "thinking": thinking});
             if let Some(sig) = thinking_signature {
@@ -198,6 +199,7 @@ fn content_to_block(c: &Content) -> Value {
             id,
             name,
             arguments,
+            ..
         } => json!({
             "type": "tool_use",
             "id": id,
@@ -540,6 +542,10 @@ impl Provider for AnthropicProvider {
                             api: api.clone(),
                             provider: provider.clone(),
                             model: response_model.clone().unwrap_or_else(|| model_id.clone()),
+                            response_model: response_model.clone(),
+                            response_id: None,
+                            diagnostics: None,
+                            raw_stop_reason: None,
                             usage: err_usage,
                             stop_reason: StopReason::Error,
                             error_message: Some(err_msg),
@@ -557,10 +563,14 @@ impl Provider for AnthropicProvider {
             for idx in &order {
                 if let Some(st) = blocks.get(idx) {
                     match st.kind {
-                        BlockKind::Text => out_content.push(Content::Text { text: st.text_buf.clone() }),
+                        BlockKind::Text => out_content.push(Content::Text {
+                            text: st.text_buf.clone(),
+                            text_signature: None,
+                        }),
                         BlockKind::Thinking => out_content.push(Content::Thinking {
                             thinking: st.text_buf.clone(),
                             thinking_signature: st.signature.clone(),
+                            redacted: None,
                         }),
                         BlockKind::ToolUse => {
                             let args: Value = if st.json_buf.is_empty() {
@@ -572,6 +582,7 @@ impl Provider for AnthropicProvider {
                                 id: st.tool_id.clone(),
                                 name: st.tool_name.clone(),
                                 arguments: args,
+                                thought_signature: None,
                             });
                         }
                         BlockKind::Unknown => {}
@@ -582,7 +593,11 @@ impl Provider for AnthropicProvider {
                 content: out_content,
                 api,
                 provider,
-                model: response_model.unwrap_or(model_id),
+                model: response_model.clone().unwrap_or(model_id),
+                response_model,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage,
                 stop_reason: stop,
                 error_message: None,

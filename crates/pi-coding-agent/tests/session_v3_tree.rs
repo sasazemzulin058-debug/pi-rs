@@ -7,7 +7,9 @@ use session::{load_tree_jsonl, save_tree_jsonl, Session, SessionEntry, SessionTr
 
 fn message(text: &str) -> SessionEntry {
     SessionEntry::Message {
-        message: Message::user_text(text),
+        message: session::AgentMessageValue(
+            serde_json::to_value(Message::user_text(text)).unwrap(),
+        ),
     }
 }
 
@@ -98,6 +100,54 @@ fn imported_unknown_records_are_preserved_without_messages() {
 }
 
 #[test]
+fn test_compaction_retained_tail_checkpoint_resolution() {
+    let mut tree = SessionTree::new();
+    let root = tree.append(None, message("pre-compaction-1")).unwrap();
+    let m2 = tree
+        .append(Some(&root), message("pre-compaction-2"))
+        .unwrap();
+    let tail_val = session::AgentMessageValue(serde_json::json!({
+        "role": "user",
+        "content": "tail-msg",
+        "timestamp": 1700000000000i64
+    }));
+    let comp = tree
+        .append(
+            Some(&m2),
+            SessionEntry::Compaction {
+                summary: "compacted old context".into(),
+                first_kept_entry_id: None,
+                tokens_before: Some(500),
+                retained_tail: Some(vec![tail_val.clone()]),
+                details: None,
+                usage: None,
+                from_hook: None,
+            },
+        )
+        .unwrap();
+    let post = tree
+        .append(Some(&comp), message("post-compaction"))
+        .unwrap();
+
+    let eff_msgs = tree.effective_messages(&post).unwrap();
+    assert_eq!(eff_msgs.len(), 3);
+    let expected_summary = format!(
+        "{}compacted old context{}",
+        session::COMPACTION_SUMMARY_PREFIX,
+        session::COMPACTION_SUMMARY_SUFFIX
+    );
+    assert!(
+        matches!(&eff_msgs[0], Message::User { content, .. } if matches!(&content[0], pi_ai::Content::Text { text, .. } if text == &expected_summary))
+    );
+    assert!(
+        matches!(&eff_msgs[1], Message::User { content, .. } if matches!(&content[0], pi_ai::Content::Text { text, .. } if text == "tail-msg"))
+    );
+    assert!(
+        matches!(&eff_msgs[2], Message::User { content, .. } if matches!(&content[0], pi_ai::Content::Text { text, .. } if text == "post-compaction"))
+    );
+}
+
+#[test]
 fn imported_upstream_parent_entry_id_source_id_and_timestamps_preserved() {
     let dir = std::env::temp_dir().join(format!("pi-rs-u1-upstream-{}", std::process::id()));
     let path = dir.join("upstream.jsonl");
@@ -163,6 +213,10 @@ fn compaction_context_resolution_filters_summarized_entries() {
                 summary: "summary of e0 and e1".into(),
                 first_kept_entry_id: Some(e2.clone()),
                 tokens_before: Some(1000),
+                retained_tail: None,
+                details: None,
+                usage: None,
+                from_hook: None,
             },
         )
         .unwrap();
@@ -179,7 +233,7 @@ fn compaction_context_resolution_filters_summarized_entries() {
 
     let get_text = |msg: &Message| match msg {
         Message::User { content, .. } => match &content[0] {
-            pi_ai::Content::Text { text } => text.clone(),
+            pi_ai::Content::Text { text, .. } => text.clone(),
             _ => String::new(),
         },
         _ => String::new(),
@@ -383,6 +437,641 @@ fn cross_parser_interoperability_with_upstream_node_parser() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_retained_tail_upstream_shaped_jsonl_and_lossless_roundtrip() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-retained-{}", std::process::id()));
+    let path = dir.join("retained_upstream.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let jsonl_content = concat!(
+        r#"{"type":"session","version":3,"id":"s-retained"}"#,
+        "\n",
+        r#"{"type":"message","id":"e0","timestamp":"2023-11-15T00:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"pre-compaction"}]}}"#,
+        "\n",
+        r#"{"type":"compaction","id":"e1","parentId":"e0","timestamp":"2023-11-15T00:00:01.000Z","summary":"compacted context","tokensBefore":1000,"retainedTail":[{"role":"user","content":"string user content","timestamp":1700000002000},{"role":"bashExecution","command":"ls -la","output":"file1\nfile2","exitCode":0,"cancelled":false,"truncated":false,"timestamp":1700000003000},{"role":"bashExecution","command":"secret","output":"hidden","excludeFromContext":true,"timestamp":1700000004000},{"role":"custom","customType":"my-type","content":"custom payload","display":true,"timestamp":1700000005000},{"role":"branchSummary","summary":"branch summary text","fromId":"b1","timestamp":1700000006000},{"role":"compactionSummary","summary":"inner compaction summary","tokensBefore":500,"timestamp":1700000007000},{"role":"assistant","content":[{"type":"text","text":"hello"}],"api":"openai","provider":"openai","model":"gpt-4","stopReason":"stop","timestamp":1700000008500},{"role":"toolResult","toolCallId":"tc1","toolName":"bash","content":[{"type":"text","text":"ok"}],"isError":false,"timestamp":1700000008600},{"role":"futureRole","someField":"value","timestamp":1700000008000}]}"#,
+        "\n",
+        r#"{"type":"message","id":"e2","parentId":"e1","timestamp":"2023-11-15T00:00:09.000Z","message":{"role":"user","content":[{"type":"text","text":"post-compaction"}]}}"#,
+        "\n"
+    );
+    std::fs::write(&path, jsonl_content).unwrap();
+
+    let tree = session::import_pi_session_as_tree(&path).unwrap();
+    let leaf = tree.active_leaf().unwrap();
+
+    // Verify ISO entry timestamp parsed to timestamp_ms correctly (2023-11-15T00:00:01.000Z = 1700006401000)
+    let comp_node = tree.nodes().nth(1).unwrap();
+    assert_eq!(comp_node.timestamp_ms, Some(1700006401000));
+
+    let agent_msgs = tree.effective_agent_messages(leaf).unwrap();
+    assert_eq!(agent_msgs.len(), 11);
+    assert_eq!(agent_msgs[0].0["role"], "compactionSummary");
+    assert_eq!(agent_msgs[0].0["summary"], "compacted context");
+    assert_eq!(agent_msgs[1].0["role"], "user");
+    assert_eq!(agent_msgs[1].0["content"], "string user content");
+    assert_eq!(agent_msgs[7].0["role"], "assistant");
+    assert_eq!(agent_msgs[8].0["role"], "toolResult");
+    assert_eq!(agent_msgs[9].0["role"], "futureRole");
+    assert_eq!(agent_msgs[9].0["someField"], "value");
+
+    let llm_msgs = tree.effective_messages(leaf).unwrap();
+    assert_eq!(llm_msgs.len(), 9);
+
+    let saved_path = dir.join("saved_retained.jsonl");
+    save_tree_jsonl(&saved_path, &tree).unwrap();
+    let reloaded = session::import_pi_session_as_tree(&saved_path).unwrap();
+    let reloaded_agent_msgs = reloaded
+        .effective_agent_messages(reloaded.active_leaf().unwrap())
+        .unwrap();
+    assert_eq!(agent_msgs.len(), reloaded_agent_msgs.len());
+    for (orig, reload) in agent_msgs.iter().zip(reloaded_agent_msgs.iter()) {
+        assert_eq!(orig.0["role"], reload.0["role"]);
+        if orig.0["role"] == "user" {
+            assert_eq!(orig.0["content"], reload.0["content"]);
+        }
+    }
+
+    let raw_saved = std::fs::read_to_string(&saved_path).unwrap();
+    assert!(raw_saved.contains(r#""retainedTail":["#));
+    assert!(raw_saved.contains(r#""futureRole""#));
+    assert!(raw_saved.contains(r#""someField":"value""#));
+
+    // Full Value equality test for retainedTail round-trip
+    let saved_lines: Vec<&str> = raw_saved.lines().collect();
+    let comp_line: serde_json::Value = serde_json::from_str(saved_lines[2]).unwrap();
+    let original_comp_line: serde_json::Value =
+        serde_json::from_str(jsonl_content.lines().nth(2).unwrap()).unwrap();
+    assert_eq!(
+        comp_line["retainedTail"],
+        original_comp_line["retainedTail"]
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_compaction_without_first_kept_excludes_pre_compaction() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-nofk-{}", std::process::id()));
+    let path = dir.join("nofk.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let jsonl_content = concat!(
+        r#"{"type":"session","version":3,"id":"s-nofk"}"#,
+        "\n",
+        r#"{"type":"message","id":"e0","timestamp":1700000000000,"message":{"role":"user","content":[{"type":"text","text":"pre-compaction message"}]}}"#,
+        "\n",
+        r#"{"type":"compaction","id":"e1","parentId":"e0","timestamp":1700000001000,"summary":"compacted context summary"}"#,
+        "\n",
+        r#"{"type":"message","id":"e2","parentId":"e1","timestamp":1700000002000,"message":{"role":"user","content":[{"type":"text","text":"post-compaction message"}]}}"#,
+        "\n"
+    );
+    std::fs::write(&path, jsonl_content).unwrap();
+
+    let tree = session::import_pi_session_as_tree(&path).unwrap();
+    let leaf = tree.active_leaf().unwrap();
+
+    let ctx = tree.effective_context(leaf).unwrap();
+    assert_eq!(ctx.len(), 2);
+    assert!(matches!(ctx[0], SessionEntry::Compaction { .. }));
+    assert!(matches!(ctx[1], SessionEntry::Message { .. }));
+
+    let msgs = tree.effective_messages(leaf).unwrap();
+    assert_eq!(msgs.len(), 2);
+    let get_text = |msg: &Message| match msg {
+        Message::User { content, .. } => match &content[0] {
+            pi_ai::Content::Text { text, .. } => text.clone(),
+            _ => String::new(),
+        },
+        _ => String::new(),
+    };
+    assert!(get_text(&msgs[0]).contains("compacted context summary"));
+    assert_eq!(get_text(&msgs[1]), "post-compaction message");
+
+    let agent_msgs = tree.effective_agent_messages(leaf).unwrap();
+    assert_eq!(agent_msgs.len(), 2);
+    assert_eq!(agent_msgs[0].0["role"], "compactionSummary");
+    assert_eq!(agent_msgs[1].0["role"], "user");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_retained_tail_negative_parsing() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-neg-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let invalid_object = concat!(
+        r#"{"type":"session","id":"s1"}"#,
+        "\n",
+        r#"{"type":"compaction","id":"e0","summary":"comp","retainedTail":{}}"#,
+        "\n"
+    );
+    let p1 = dir.join("obj.jsonl");
+    std::fs::write(&p1, invalid_object).unwrap();
+    assert!(session::import_pi_session_as_tree(&p1).is_err());
+
+    let invalid_string = concat!(
+        r#"{"type":"session","id":"s1"}"#,
+        "\n",
+        r#"{"type":"compaction","id":"e0","summary":"comp","retainedTail":"bad"}"#,
+        "\n"
+    );
+    let p2 = dir.join("str.jsonl");
+    std::fs::write(&p2, invalid_string).unwrap();
+    assert!(session::import_pi_session_as_tree(&p2).is_err());
+
+    let invalid_array_element = concat!(
+        r#"{"type":"session","id":"s1"}"#,
+        "\n",
+        r#"{"type":"compaction","id":"e0","summary":"comp","retainedTail":[123]}"#,
+        "\n"
+    );
+    let p3 = dir.join("elem.jsonl");
+    std::fs::write(&p3, invalid_array_element).unwrap();
+    assert!(session::import_pi_session_as_tree(&p3).is_err());
+
+    let null_tail = concat!(
+        r#"{"type":"session","id":"s1"}"#,
+        "\n",
+        r#"{"type":"compaction","id":"e0","summary":"comp","retainedTail":null}"#,
+        "\n"
+    );
+    let p4 = dir.join("null.jsonl");
+    std::fs::write(&p4, null_tail).unwrap();
+    assert!(session::import_pi_session_as_tree(&p4).is_err());
+
+    let null_json = serde_json::json!({"type":"compaction","summary":"s","retainedTail":null});
+    assert!(serde_json::from_value::<SessionEntry>(null_json).is_err());
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_ordinary_message_negative_parsing() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-msg-neg-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let null_msg = concat!(
+        r#"{"type":"session","id":"s1"}"#,
+        "\n",
+        r#"{"type":"message","id":"e0","message":null}"#,
+        "\n"
+    );
+    let p1 = dir.join("null_msg.jsonl");
+    std::fs::write(&p1, null_msg).unwrap();
+    let err1 = session::import_pi_session_as_tree(&p1).unwrap_err();
+    assert!(err1.to_string().contains("line 2"));
+
+    let string_msg = concat!(
+        r#"{"type":"session","id":"s1"}"#,
+        "\n",
+        r#"{"type":"message","id":"e0","message":"bad"}"#,
+        "\n"
+    );
+    let p2 = dir.join("string_msg.jsonl");
+    std::fs::write(&p2, string_msg).unwrap();
+    let err2 = session::import_pi_session_as_tree(&p2).unwrap_err();
+    assert!(err2.to_string().contains("line 2"));
+
+    let null_serde = serde_json::json!({"type":"message","message":null});
+    assert!(serde_json::from_value::<SessionEntry>(null_serde).is_err());
+
+    let bad_serde = serde_json::json!({"type":"message","message":"bad"});
+    assert!(serde_json::from_value::<SessionEntry>(bad_serde).is_err());
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_ordinary_message_full_value_roundtrip_and_projection() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-msg-rt-{}", std::process::id()));
+    let in_path = dir.join("input.jsonl");
+    let out_path = dir.join("output.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let user_msg = serde_json::json!({
+        "role": "user",
+        "content": "raw string content preserved",
+        "timestamp": 1700000000000i64
+    });
+
+    let assistant_msg = serde_json::json!({
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": "hello", "textSignature": "sig1"},
+            {"type": "thinking", "thinking": "hm", "thinkingSignature": "sig2", "redacted": true},
+            {"type": "toolCall", "id": "tc1", "name": "read", "arguments": {"path": "/foo"}, "thoughtSignature": "sig3"}
+        ],
+        "api": "openai-chat",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "responseModel": "gpt-4o-2024-08-06",
+        "responseId": "resp_123",
+        "diagnostics": {"rawHeader": "val"},
+        "rawStopReason": "end_turn",
+        "usage": {
+            "input": 10,
+            "output": 20,
+            "cacheRead": 5,
+            "cacheWrite": 2,
+            "totalTokens": 37,
+            "cacheWrite1h": 1,
+            "reasoning": 15,
+            "cost": {
+                "input": 0.01,
+                "output": 0.02,
+                "cacheRead": 0.001,
+                "cacheWrite": 0.0005,
+                "total": 0.0315
+            }
+        },
+        "stopReason": "pending",
+        "errorMessage": "none_error",
+        "timestamp": 1700000001000i64
+    });
+
+    let tool_result_msg = serde_json::json!({
+        "role": "toolResult",
+        "toolCallId": "tc1",
+        "toolName": "read",
+        "content": [
+            {"type": "image", "data": "base64data", "mimeType": "image/png"}
+        ],
+        "isError": false,
+        "details": {"exitCode": 0},
+        "usage": {
+            "input": 1,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 3,
+            "cost": {"input": 0.0, "output": 0.0, "cacheRead": 0.0, "cacheWrite": 0.0, "total": 0.0}
+        },
+        "addedToolNames": ["bash"],
+        "timestamp": 1700000002000i64
+    });
+
+    let jsonl = format!(
+        "{}\n{}\n{}\n{}\n",
+        r#"{"type":"session","id":"s_rt"}"#,
+        serde_json::json!({"type":"message","id":"m1","message": user_msg}),
+        serde_json::json!({"type":"message","id":"m2","parentHeaderId":"m1","message": assistant_msg}),
+        serde_json::json!({"type":"message","id":"m3","parentHeaderId":"m2","message": tool_result_msg}),
+    );
+
+    std::fs::write(&in_path, &jsonl).unwrap();
+
+    let tree = session::import_pi_session_as_tree(&in_path).unwrap();
+    save_tree_jsonl(&out_path, &tree).unwrap();
+
+    let reloaded_tree = session::import_pi_session_as_tree(&out_path).unwrap();
+
+    let eff_agent_msgs = reloaded_tree.effective_agent_messages("m3").unwrap();
+    assert_eq!(eff_agent_msgs.len(), 3);
+    assert_eq!(
+        eff_agent_msgs[0].0["content"],
+        "raw string content preserved"
+    );
+    assert_eq!(eff_agent_msgs[1].0, assistant_msg);
+    assert_eq!(eff_agent_msgs[2].0, tool_result_msg);
+
+    let eff_msgs = reloaded_tree.effective_messages("m3").unwrap();
+    assert_eq!(eff_msgs.len(), 3);
+
+    // Verify LLM Projection
+    if let Message::User { content, .. } = &eff_msgs[0] {
+        assert_eq!(content[0].as_text(), Some("raw string content preserved"));
+    } else {
+        panic!("Expected user message");
+    }
+
+    if let Message::Assistant(a) = &eff_msgs[1] {
+        assert_eq!(a.stop_reason, pi_ai::StopReason::Pending);
+        assert_eq!(a.response_model.as_deref(), Some("gpt-4o-2024-08-06"));
+        assert_eq!(a.response_id.as_deref(), Some("resp_123"));
+        assert_eq!(a.raw_stop_reason.as_deref(), Some("end_turn"));
+        assert_eq!(a.diagnostics.as_ref().unwrap()["rawHeader"], "val");
+        assert_eq!(a.usage.cache_read, 5);
+        assert_eq!(a.usage.cache_write, 2);
+        assert_eq!(a.usage.total_tokens, 37);
+        assert_eq!(a.usage.cache_write_1h, Some(1));
+        assert_eq!(a.usage.reasoning, Some(15));
+
+        if let pi_ai::Content::Text { text_signature, .. } = &a.content[0] {
+            assert_eq!(text_signature.as_deref(), Some("sig1"));
+        } else {
+            panic!("expected text content");
+        }
+
+        if let pi_ai::Content::Thinking {
+            thinking_signature,
+            redacted,
+            ..
+        } = &a.content[1]
+        {
+            assert_eq!(thinking_signature.as_deref(), Some("sig2"));
+            assert_eq!(*redacted, Some(true));
+        } else {
+            panic!("expected thinking content");
+        }
+
+        if let pi_ai::Content::ToolCall {
+            thought_signature, ..
+        } = &a.content[2]
+        {
+            assert_eq!(thought_signature.as_deref(), Some("sig3"));
+        } else {
+            panic!("expected toolCall content");
+        }
+    } else {
+        panic!("Expected assistant message");
+    }
+
+    if let Message::ToolResult(tr) = &eff_msgs[2] {
+        assert_eq!(tr.details.as_ref().unwrap()["exitCode"], 0);
+        assert_eq!(
+            tr.added_tool_names.as_ref().unwrap(),
+            &vec!["bash".to_string()]
+        );
+        assert_eq!(tr.usage.as_ref().unwrap().total_tokens, 3);
+        if let pi_ai::Content::Image { mime_type, data } = &tr.content[0] {
+            assert_eq!(mime_type, "image/png");
+            assert_eq!(data, "base64data");
+        } else {
+            panic!("expected image content");
+        }
+    } else {
+        panic!("Expected toolResult message");
+    }
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn compaction_and_branch_summary_direct_serde_roundtrip() {
+    let compaction_orig = serde_json::json!({
+        "type": "compaction",
+        "summary": "compacted context summary",
+        "firstKeptEntryId": "entry-100",
+        "tokensBefore": 12000,
+        "retainedTail": [
+            {
+                "role": "user",
+                "content": "tail content",
+                "timestamp": 1700000000000i64
+            }
+        ],
+        "details": {
+            "hookName": "auto-compact",
+            "nested": {
+                "strategy": "retained-tail",
+                "keptCount": 1
+            }
+        },
+        "usage": {
+            "promptTokens": 100,
+            "completionTokens": 50,
+            "cacheRead": 20,
+            "customProviderField": "extra_val"
+        },
+        "fromHook": true
+    });
+
+    let compaction_entry: SessionEntry = serde_json::from_value(compaction_orig.clone()).unwrap();
+    let compaction_saved = serde_json::to_value(&compaction_entry).unwrap();
+    assert_eq!(compaction_saved, compaction_orig);
+
+    let branch_orig = serde_json::json!({
+        "type": "branch_summary",
+        "summary": "branch context summary",
+        "fromId": "node-5",
+        "details": {
+            "branchName": "feature/parity",
+            "config": [1, 2, 3]
+        },
+        "usage": {
+            "totalTokens": 450,
+            "cost": {
+                "input": 0.001,
+                "output": 0.002
+            }
+        },
+        "fromHook": false
+    });
+
+    let branch_entry: SessionEntry = serde_json::from_value(branch_orig.clone()).unwrap();
+    let branch_saved = serde_json::to_value(&branch_entry).unwrap();
+    assert_eq!(branch_saved, branch_orig);
+}
+
+#[test]
+fn compaction_and_branch_summary_jsonl_import_save_reload_preserves_metadata() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-comp-meta-{}", std::process::id()));
+    let in_path = dir.join("in.jsonl");
+    let out_path = dir.join("out.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let compaction_details = serde_json::json!({
+        "hookName": "pre-compact-hook",
+        "deep": {"a": [1, true, null]}
+    });
+    let compaction_usage = serde_json::json!({
+        "promptTokens": 500,
+        "completionTokens": 100,
+        "vendor": {"rate": "flat"}
+    });
+
+    let branch_details = serde_json::json!({
+        "originBranch": "main",
+        "merged": false
+    });
+    let branch_usage = serde_json::json!({
+        "totalTokens": 250
+    });
+
+    let lines = [
+        serde_json::json!({"type": "session", "id": "s1"}),
+        serde_json::json!({
+            "type": "message",
+            "id": "node-1",
+            "timestamp": 1700000000000i64,
+            "message": {
+                "role": "user",
+                "content": "msg 1"
+            }
+        }),
+        serde_json::json!({
+            "type": "compaction",
+            "id": "node-2",
+            "parentEntryId": "node-1",
+            "timestamp": 1700000001000i64,
+            "summary": "compacted state",
+            "firstKeptEntryId": "node-1",
+            "tokensBefore": 5000,
+            "retainedTail": [
+                {
+                    "role": "user",
+                    "content": "msg 1",
+                    "timestamp": 1700000000000i64
+                }
+            ],
+            "details": compaction_details,
+            "usage": compaction_usage,
+            "fromHook": true
+        }),
+        serde_json::json!({
+            "type": "message",
+            "id": "node-3",
+            "parentEntryId": "node-2",
+            "timestamp": 1700000002000i64,
+            "message": {
+                "role": "user",
+                "content": "msg 2"
+            }
+        }),
+        serde_json::json!({
+            "type": "branch_summary",
+            "id": "node-4",
+            "parentEntryId": "node-3",
+            "timestamp": 1700000003000i64,
+            "summary": "branched summary state",
+            "fromId": "node-1",
+            "details": branch_details,
+            "usage": branch_usage,
+            "fromHook": false
+        }),
+    ];
+
+    let jsonl = format!(
+        "{}\n{}\n{}\n{}\n{}\n",
+        lines[0], lines[1], lines[2], lines[3], lines[4]
+    );
+    std::fs::write(&in_path, &jsonl).unwrap();
+
+    let tree = session::import_pi_session_as_tree(&in_path).unwrap();
+    save_tree_jsonl(&out_path, &tree).unwrap();
+
+    let reloaded = session::import_pi_session_as_tree(&out_path).unwrap();
+    let node2 = reloaded.nodes().find(|n| n.entry_id == "node-2").unwrap();
+    if let SessionEntry::Compaction {
+        details,
+        usage,
+        from_hook,
+        ..
+    } = &node2.entry
+    {
+        assert_eq!(details.as_ref(), Some(&compaction_details));
+        assert_eq!(usage.as_ref(), Some(&compaction_usage));
+        assert_eq!(*from_hook, Some(true));
+    } else {
+        panic!("expected compaction node");
+    }
+
+    let node4 = reloaded.nodes().find(|n| n.entry_id == "node-4").unwrap();
+    if let SessionEntry::BranchSummary {
+        details,
+        usage,
+        from_hook,
+        ..
+    } = &node4.entry
+    {
+        assert_eq!(details.as_ref(), Some(&branch_details));
+        assert_eq!(usage.as_ref(), Some(&branch_usage));
+        assert_eq!(*from_hook, Some(false));
+    } else {
+        panic!("expected branch_summary node");
+    }
+
+    // Verify saved JSONL line payloads for compaction and branch_summary after stripping node envelope fields equal original entry payloads
+    let saved_content = std::fs::read_to_string(&out_path).unwrap();
+    let saved_lines: Vec<serde_json::Value> = saved_content
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    assert_eq!(saved_lines.len(), 5);
+
+    let strip_envelope = |mut val: serde_json::Value| {
+        if let Some(obj) = val.as_object_mut() {
+            obj.remove("id");
+            obj.remove("parentId");
+            obj.remove("parentEntryId");
+            obj.remove("timestamp");
+            obj.remove("source_entry_id");
+        }
+        val
+    };
+
+    // Line 2: compaction
+    assert_eq!(
+        strip_envelope(saved_lines[2].clone()),
+        strip_envelope(lines[2].clone())
+    );
+
+    // Line 4: branch_summary
+    assert_eq!(
+        strip_envelope(saved_lines[4].clone()),
+        strip_envelope(lines[4].clone())
+    );
+
+    // Verify context projection still projects summary correctly
+    let eff_msgs = reloaded.effective_messages("node-4").unwrap();
+    assert_eq!(eff_msgs.len(), 4); // compaction summary text, msg1 (retained tail), msg2, branch summary text
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn malformed_from_hook_fails_closed() {
+    // Direct serde
+    let bad_comp_null = serde_json::json!({
+        "type": "compaction",
+        "summary": "s",
+        "fromHook": null
+    });
+    assert!(serde_json::from_value::<SessionEntry>(bad_comp_null).is_err());
+
+    let bad_branch_str = serde_json::json!({
+        "type": "branch_summary",
+        "summary": "s",
+        "fromHook": "true"
+    });
+    assert!(serde_json::from_value::<SessionEntry>(bad_branch_str).is_err());
+
+    // Importer
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-bad-hook-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let path_comp = dir.join("bad_comp.jsonl");
+    std::fs::write(
+        &path_comp,
+        concat!(
+            r#"{"type":"session","id":"s1"}"#,
+            "\n",
+            r#"{"type":"compaction","id":"c1","summary":"sum","fromHook":123}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let err_comp = session::import_pi_session_as_tree(&path_comp).unwrap_err();
+    assert!(err_comp.to_string().contains("line 2"));
+
+    let path_branch = dir.join("bad_branch.jsonl");
+    std::fs::write(
+        &path_branch,
+        concat!(
+            r#"{"type":"session","id":"s1"}"#,
+            "\n",
+            r#"{"type":"branch_summary","id":"b1","summary":"sum","fromHook":[]}"#,
+            "\n"
+        ),
+    )
+    .unwrap();
+    let err_branch = session::import_pi_session_as_tree(&path_branch).unwrap_err();
+    assert!(err_branch.to_string().contains("line 2"));
 
     let _ = std::fs::remove_dir_all(dir);
 }

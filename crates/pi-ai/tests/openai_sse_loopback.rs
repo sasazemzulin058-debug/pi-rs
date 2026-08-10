@@ -253,7 +253,7 @@ data: [DONE]\n\n"
 
         assert_eq!(message.content.len(), 2);
         match &message.content[0] {
-            Content::Text { text } => assert_eq!(text, "Hello world!"),
+            Content::Text { text, .. } => assert_eq!(text, "Hello world!"),
             _ => panic!("Expected text content at index 0"),
         }
         match &message.content[1] {
@@ -261,6 +261,7 @@ data: [DONE]\n\n"
                 id,
                 name,
                 arguments,
+                ..
             } => {
                 assert_eq!(id, "call_abc123");
                 assert_eq!(name, "calculator");

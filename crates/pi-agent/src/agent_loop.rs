@@ -179,6 +179,7 @@ pub async fn run_agent_with_history(
                     id,
                     name,
                     arguments,
+                    ..
                 } => Some((id.clone(), name.clone(), arguments.clone())),
                 _ => None,
             })
@@ -216,6 +217,9 @@ pub async fn run_agent_with_history(
                             tool_name: name,
                             content: vec![Content::text(format!("permission denied: {reason}"))],
                             is_error: true,
+                            details: None,
+                            usage: None,
+                            added_tool_names: None,
                             timestamp: pi_ai::now_ms(),
                         };
                         messages.push(Message::ToolResult(tr));
@@ -265,6 +269,9 @@ pub async fn run_agent_with_history(
                 tool_name: name,
                 content,
                 is_error,
+                details: None,
+                usage: None,
+                added_tool_names: None,
                 timestamp: pi_ai::now_ms(),
             };
             messages.push(Message::ToolResult(tr));

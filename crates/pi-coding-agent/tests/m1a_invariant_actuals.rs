@@ -56,10 +56,15 @@ async fn generate_invariant_actual_fixtures() {
             message: AssistantMessage {
                 content: vec![Content::Text {
                     text: "hello".into(),
+                    text_signature: None,
                 }],
                 api: "openai-completions".into(),
                 provider: "test-provider".into(),
                 model: "test-model".into(),
+                response_model: None,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage: Usage::default(),
                 stop_reason: StopReason::Stop,
                 error_message: None,
@@ -198,10 +203,17 @@ async fn generate_invariant_actual_fixtures() {
             AssistantMessageEvent::Done {
                 reason: StopReason::Stop,
                 message: AssistantMessage {
-                    content: vec![Content::Text { text: "ok".into() }],
+                    content: vec![Content::Text {
+                        text: "ok".into(),
+                        text_signature: None,
+                    }],
                     api: "openai-completions".into(),
                     provider: "test-provider".into(),
                     model: "test-model".into(),
+                    response_model: None,
+                    response_id: None,
+                    diagnostics: None,
+                    raw_stop_reason: None,
                     usage: Usage::default(),
                     stop_reason: StopReason::Stop,
                     error_message: None,

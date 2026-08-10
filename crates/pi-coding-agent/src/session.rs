@@ -11,6 +11,10 @@ use anyhow::Context;
 use pi_ai::Message;
 use serde::{Deserialize, Serialize};
 
+fn default_native() -> SessionOrigin {
+    SessionOrigin::Native
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SessionOrigin {
@@ -18,14 +22,150 @@ pub enum SessionOrigin {
     CopiedFromUpstream { source_session_id: String },
 }
 
-fn default_native() -> SessionOrigin {
-    SessionOrigin::Native
+pub const COMPACTION_SUMMARY_PREFIX: &str =
+    "The conversation history before this point was compacted into the following summary:\n\n<summary>\n";
+pub const COMPACTION_SUMMARY_SUFFIX: &str = "\n</summary>";
+
+pub const BRANCH_SUMMARY_PREFIX: &str =
+    "The following is a summary of a branch that this conversation came back from:\n\n<summary>\n";
+pub const BRANCH_SUMMARY_SUFFIX: &str = "</summary>";
+
+pub fn bash_execution_to_text(val: &serde_json::Value) -> String {
+    let command = val.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    let output = val.get("output").and_then(|v| v.as_str()).unwrap_or("");
+    let cancelled = val
+        .get("cancelled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let exit_code = val
+        .get("exitCode")
+        .or_else(|| val.get("exit_code"))
+        .and_then(|v| v.as_i64());
+    let truncated = val
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let full_output_path = val
+        .get("fullOutputPath")
+        .or_else(|| val.get("full_output_path"))
+        .and_then(|v| v.as_str());
+
+    let mut text = format!("Ran `{command}`\n");
+    if !output.is_empty() {
+        text.push_str(&format!("```\n{output}\n```"));
+    } else {
+        text.push_str("(no output)");
+    }
+    if cancelled {
+        text.push_str("\n\n(command cancelled)");
+    } else if let Some(code) = exit_code {
+        if code != 0 {
+            text.push_str(&format!("\n\nCommand exited with code {code}"));
+        }
+    }
+    if truncated {
+        if let Some(p) = full_output_path {
+            text.push_str(&format!("\n\n[Output truncated. Full output: {p}]"));
+        }
+    }
+    text
 }
+
+pub fn agent_message_to_llm(val: &serde_json::Value) -> anyhow::Result<Option<Message>> {
+    let role = val.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    let timestamp = val
+        .get("timestamp")
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(pi_ai::now_ms);
+
+    match role {
+        "bashExecution" => {
+            if val
+                .get("excludeFromContext")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return Ok(None);
+            }
+            let text = bash_execution_to_text(val);
+            Ok(Some(Message::User {
+                content: vec![pi_ai::Content::Text {
+                    text,
+                    text_signature: None,
+                }],
+                timestamp,
+            }))
+        }
+        "custom" => {
+            let content_val = val.get("content");
+            let content = match content_val {
+                Some(v) if v.is_string() => {
+                    vec![pi_ai::Content::Text {
+                        text: v.as_str().unwrap().to_string(),
+                        text_signature: None,
+                    }]
+                }
+                Some(v) => serde_json::from_value::<Vec<pi_ai::Content>>(v.clone())
+                    .map_err(|e| anyhow::anyhow!("invalid custom content: {e}"))?,
+                None => Vec::new(),
+            };
+            Ok(Some(Message::User { content, timestamp }))
+        }
+        "branchSummary" => {
+            let summary = val.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let text = format!("{BRANCH_SUMMARY_PREFIX}{summary}{BRANCH_SUMMARY_SUFFIX}");
+            Ok(Some(Message::User {
+                content: vec![pi_ai::Content::Text {
+                    text,
+                    text_signature: None,
+                }],
+                timestamp,
+            }))
+        }
+        "compactionSummary" => {
+            let summary = val.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+            let text = format!("{COMPACTION_SUMMARY_PREFIX}{summary}{COMPACTION_SUMMARY_SUFFIX}");
+            Ok(Some(Message::User {
+                content: vec![pi_ai::Content::Text {
+                    text,
+                    text_signature: None,
+                }],
+                timestamp,
+            }))
+        }
+        "user" | "assistant" | "toolResult" => {
+            let mut val_clone = val.clone();
+            // Upstream user content string normalization for Message parsing
+            if role == "user" {
+                if let Some(obj) = val_clone.as_object_mut() {
+                    if let Some(text) = obj
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                    {
+                        obj.insert(
+                            "content".into(),
+                            serde_json::json!([{"type":"text", "text":text}]),
+                        );
+                    }
+                }
+            }
+            let msg = serde_json::from_value::<Message>(val_clone)
+                .map_err(|e| anyhow::anyhow!("invalid standard message: {e}"))?;
+            Ok(Some(msg))
+        }
+        _ => Ok(None),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentMessageValue(pub serde_json::Value);
 
 #[derive(Debug, Clone)]
 pub enum SessionEntry {
     Message {
-        message: Message,
+        message: AgentMessageValue,
     },
     ModelChange {
         model_id: String,
@@ -38,6 +178,10 @@ pub enum SessionEntry {
         summary: String,
         first_kept_entry_id: Option<String>,
         tokens_before: Option<u64>,
+        retained_tail: Option<Vec<AgentMessageValue>>,
+        details: Option<serde_json::Value>,
+        usage: Option<serde_json::Value>,
+        from_hook: Option<bool>,
     },
     Summary {
         summary: String,
@@ -46,6 +190,9 @@ pub enum SessionEntry {
     BranchSummary {
         summary: String,
         from_id: Option<String>,
+        details: Option<serde_json::Value>,
+        usage: Option<serde_json::Value>,
+        from_hook: Option<bool>,
     },
     Custom {
         custom_type: String,
@@ -79,9 +226,22 @@ impl<'de> Deserialize<'de> for SessionEntry {
         let rec_type = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
         match rec_type {
             "message" => {
-                let msg_val = val.get("message").cloned().unwrap_or_else(|| val.clone());
-                if let Ok(msg) = serde_json::from_value::<Message>(msg_val) {
-                    return Ok(SessionEntry::Message { message: msg });
+                if let Some(msg_val) = val.get("message") {
+                    if msg_val.is_object() {
+                        return Ok(SessionEntry::Message {
+                            message: AgentMessageValue(msg_val.clone()),
+                        });
+                    } else {
+                        return Err(serde::de::Error::custom("message field must be an object"));
+                    }
+                } else if val.is_object() && val.get("role").is_some() {
+                    return Ok(SessionEntry::Message {
+                        message: AgentMessageValue(val.clone()),
+                    });
+                } else {
+                    return Err(serde::de::Error::custom(
+                        "message entry missing message object",
+                    ));
                 }
             }
             "model_change" | "model-change" => {
@@ -125,10 +285,55 @@ impl<'de> Deserialize<'de> for SessionEntry {
                             .get("tokensBefore")
                             .or_else(|| val.get("tokens_before"))
                             .and_then(|v| v.as_u64());
+                        let retained_tail =
+                            match val.get("retainedTail").or_else(|| val.get("retained_tail")) {
+                                Some(v) if v.is_array() => {
+                                    let items = v.as_array().unwrap();
+                                    let mut vec = Vec::new();
+                                    for item in items {
+                                        if item.is_object() {
+                                            vec.push(AgentMessageValue(item.clone()));
+                                        } else {
+                                            return Err(serde::de::Error::custom(
+                                                "retainedTail array elements must be objects",
+                                            ));
+                                        }
+                                    }
+                                    Some(vec)
+                                }
+                                Some(v) if v.is_null() => {
+                                    return Err(serde::de::Error::custom(
+                                        "retainedTail must not be null",
+                                    ));
+                                }
+                                Some(_) => {
+                                    return Err(serde::de::Error::custom(
+                                        "retainedTail must be an array",
+                                    ));
+                                }
+                                None => None,
+                            };
+                        let details = val.get("details").cloned();
+                        let usage = val.get("usage").cloned();
+                        let from_hook = match val.get("fromHook").or_else(|| val.get("from_hook")) {
+                            Some(v) => match v.as_bool() {
+                                Some(b) => Some(b),
+                                None => {
+                                    return Err(serde::de::Error::custom(
+                                        "fromHook must be a boolean",
+                                    ))
+                                }
+                            },
+                            None => None,
+                        };
                         return Ok(SessionEntry::Compaction {
                             summary: s.into(),
                             first_kept_entry_id: first_kept,
                             tokens_before: tokens,
+                            retained_tail,
+                            details,
+                            usage,
+                            from_hook,
                         });
                     }
                 }
@@ -161,9 +366,25 @@ impl<'de> Deserialize<'de> for SessionEntry {
                             .or_else(|| val.get("from_id"))
                             .and_then(|v| v.as_str())
                             .map(Into::into);
+                        let details = val.get("details").cloned();
+                        let usage = val.get("usage").cloned();
+                        let from_hook = match val.get("fromHook").or_else(|| val.get("from_hook")) {
+                            Some(v) => match v.as_bool() {
+                                Some(b) => Some(b),
+                                None => {
+                                    return Err(serde::de::Error::custom(
+                                        "fromHook must be a boolean",
+                                    ))
+                                }
+                            },
+                            None => None,
+                        };
                         return Ok(SessionEntry::BranchSummary {
                             summary: s.into(),
                             from_id,
+                            details,
+                            usage,
+                            from_hook,
                         });
                     }
                 }
@@ -249,7 +470,7 @@ impl Serialize for SessionEntry {
         match self {
             SessionEntry::Message { message } => serde_json::json!({
                 "type": "message",
-                "message": message,
+                "message": message.0,
             })
             .serialize(serializer),
             SessionEntry::ModelChange { model_id, provider } => serde_json::json!({
@@ -267,6 +488,10 @@ impl Serialize for SessionEntry {
                 summary,
                 first_kept_entry_id,
                 tokens_before,
+                retained_tail,
+                details,
+                usage,
+                from_hook,
             } => {
                 let mut v = serde_json::json!({
                     "type": "compaction",
@@ -277,6 +502,18 @@ impl Serialize for SessionEntry {
                 }
                 if let Some(tb) = tokens_before {
                     v["tokensBefore"] = serde_json::json!(tb);
+                }
+                if let Some(rt) = retained_tail {
+                    v["retainedTail"] = serde_json::json!(rt);
+                }
+                if let Some(d) = details {
+                    v["details"] = d.clone();
+                }
+                if let Some(u) = usage {
+                    v["usage"] = u.clone();
+                }
+                if let Some(fh) = from_hook {
+                    v["fromHook"] = serde_json::json!(fh);
                 }
                 v.serialize(serializer)
             }
@@ -289,13 +526,28 @@ impl Serialize for SessionEntry {
                 "summarizedEntryIds": summarized_entry_ids,
             })
             .serialize(serializer),
-            SessionEntry::BranchSummary { summary, from_id } => {
+            SessionEntry::BranchSummary {
+                summary,
+                from_id,
+                details,
+                usage,
+                from_hook,
+            } => {
                 let mut v = serde_json::json!({
                     "type": "branch_summary",
                     "summary": summary,
                 });
                 if let Some(fid) = from_id {
                     v["fromId"] = serde_json::json!(fid);
+                }
+                if let Some(d) = details {
+                    v["details"] = d.clone();
+                }
+                if let Some(u) = usage {
+                    v["usage"] = u.clone();
+                }
+                if let Some(fh) = from_hook {
+                    v["fromHook"] = serde_json::json!(fh);
                 }
                 v.serialize(serializer)
             }
@@ -468,10 +720,11 @@ impl SessionTree {
         };
         let mut parent = None;
         for message in &session.messages {
+            let msg_val = serde_json::to_value(message)?;
             let id = tree.append(
                 parent.as_deref(),
                 SessionEntry::Message {
-                    message: message.clone(),
+                    message: AgentMessageValue(msg_val),
                 },
             )?;
             parent = Some(id);
@@ -752,25 +1005,40 @@ impl SessionTree {
         if let Some(comp_idx) = last_compaction_pos {
             let comp_entry = path[comp_idx].1;
             result.push(comp_entry);
-            let first_kept_id = match comp_entry {
-                SessionEntry::Compaction {
-                    first_kept_entry_id,
-                    ..
-                } => first_kept_entry_id.as_deref(),
-                _ => None,
-            };
 
-            let mut found_first_kept = first_kept_id.is_none();
-            for (id, entry) in &path[..comp_idx] {
-                if !found_first_kept && Some(*id) == first_kept_id {
-                    found_first_kept = true;
-                }
-                if found_first_kept {
+            if let SessionEntry::Compaction {
+                retained_tail: Some(_),
+                ..
+            } = comp_entry
+            {
+                // If retained_tail is present on compaction, it acts as a self-contained checkpoint.
+                // Preceding history is omitted.
+                for (_, entry) in &path[comp_idx + 1..] {
                     result.push(*entry);
                 }
-            }
-            for (_, entry) in &path[comp_idx + 1..] {
-                result.push(*entry);
+            } else {
+                let first_kept_id = match comp_entry {
+                    SessionEntry::Compaction {
+                        first_kept_entry_id,
+                        ..
+                    } => first_kept_entry_id.as_deref(),
+                    _ => None,
+                };
+
+                if let Some(fk) = first_kept_id {
+                    let mut found_first_kept = false;
+                    for (id, entry) in &path[..comp_idx] {
+                        if !found_first_kept && Some(*id) == Some(fk) {
+                            found_first_kept = true;
+                        }
+                        if found_first_kept {
+                            result.push(*entry);
+                        }
+                    }
+                }
+                for (_, entry) in &path[comp_idx + 1..] {
+                    result.push(*entry);
+                }
             }
         } else {
             for (_, entry) in path {
@@ -781,32 +1049,145 @@ impl SessionTree {
         Ok(result)
     }
 
-    pub fn effective_messages(&self, leaf_id: &str) -> anyhow::Result<Vec<Message>> {
-        let mut messages = Vec::new();
-        for entry in self.effective_context(leaf_id)? {
-            match entry {
-                SessionEntry::Message { message } => messages.push(message.clone()),
-                SessionEntry::CustomMessage { content, .. } => {
-                    if let Ok(msg) = serde_json::from_value::<Message>(content.clone()) {
-                        messages.push(msg);
-                    } else if let Some(text) = content.as_str() {
-                        messages.push(Message::user_text(text));
-                    } else if let Ok(items) =
-                        serde_json::from_value::<Vec<pi_ai::Content>>(content.clone())
-                    {
-                        messages.push(Message::User {
-                            content: items,
-                            timestamp: pi_ai::now_ms(),
-                        });
+    pub fn effective_agent_messages(
+        &self,
+        leaf_id: &str,
+    ) -> anyhow::Result<Vec<AgentMessageValue>> {
+        let mut path: Vec<(&SessionTreeNode, &SessionEntry)> = Vec::new();
+        let mut current = Some(leaf_id);
+        while let Some(id) = current {
+            let node = self
+                .index
+                .get(id)
+                .and_then(|i| self.nodes.get(*i))
+                .ok_or_else(|| anyhow::anyhow!("unknown entry: {id}"))?;
+            path.push((node, &node.entry));
+            current = node.parent_id.as_deref();
+        }
+        path.reverse();
+
+        let last_compaction_pos = path
+            .iter()
+            .rposition(|(_, entry)| matches!(entry, SessionEntry::Compaction { .. }));
+
+        let mut context_entries = Vec::new();
+        if let Some(comp_idx) = last_compaction_pos {
+            let comp_pair = path[comp_idx];
+            context_entries.push(comp_pair);
+
+            if let SessionEntry::Compaction {
+                retained_tail: Some(_),
+                ..
+            } = comp_pair.1
+            {
+                for pair in &path[comp_idx + 1..] {
+                    context_entries.push(*pair);
+                }
+            } else {
+                let first_kept_id = match comp_pair.1 {
+                    SessionEntry::Compaction {
+                        first_kept_entry_id,
+                        ..
+                    } => first_kept_entry_id.as_deref(),
+                    _ => None,
+                };
+
+                if let Some(fk) = first_kept_id {
+                    let mut found_first_kept = false;
+                    for pair in &path[..comp_idx] {
+                        if !found_first_kept && Some(pair.0.entry_id.as_str()) == Some(fk) {
+                            found_first_kept = true;
+                        }
+                        if found_first_kept {
+                            context_entries.push(*pair);
+                        }
                     }
                 }
-                SessionEntry::Compaction { summary, .. } => {
-                    messages.push(Message::user_text(format!("Compaction Summary: {summary}")));
+                for pair in &path[comp_idx + 1..] {
+                    context_entries.push(*pair);
                 }
-                SessionEntry::BranchSummary { summary, .. } => {
-                    messages.push(Message::user_text(format!("Branch Summary: {summary}")));
+            }
+        } else {
+            for pair in path {
+                context_entries.push(pair);
+            }
+        }
+
+        let mut result = Vec::new();
+        for (node, entry) in context_entries {
+            let ts = node.timestamp_ms.unwrap_or_else(pi_ai::now_ms);
+            match entry {
+                SessionEntry::Message { message } => {
+                    let mut val = message.0.clone();
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.entry("timestamp".to_string())
+                            .or_insert_with(|| serde_json::json!(ts));
+                    }
+                    result.push(AgentMessageValue(val));
+                }
+                SessionEntry::CustomMessage {
+                    custom_type,
+                    content,
+                    details,
+                    display,
+                } => {
+                    let mut obj = serde_json::json!({
+                        "role": "custom",
+                        "customType": custom_type,
+                        "content": content,
+                        "display": display,
+                        "timestamp": ts,
+                    });
+                    if let Some(d) = details {
+                        obj["details"] = d.clone();
+                    }
+                    result.push(AgentMessageValue(obj));
+                }
+                SessionEntry::Compaction {
+                    summary,
+                    tokens_before,
+                    retained_tail,
+                    ..
+                } => {
+                    let mut comp_msg = serde_json::json!({
+                        "role": "compactionSummary",
+                        "summary": summary,
+                        "timestamp": ts,
+                    });
+                    if let Some(tb) = tokens_before {
+                        comp_msg["tokensBefore"] = serde_json::json!(tb);
+                    }
+                    result.push(AgentMessageValue(comp_msg));
+                    if let Some(tail) = retained_tail {
+                        result.extend(tail.clone());
+                    }
+                }
+                SessionEntry::BranchSummary {
+                    summary, from_id, ..
+                } => {
+                    let mut branch_msg = serde_json::json!({
+                        "role": "branchSummary",
+                        "summary": summary,
+                        "timestamp": ts,
+                    });
+                    if let Some(fid) = from_id {
+                        branch_msg["fromId"] = serde_json::json!(fid);
+                    }
+                    result.push(AgentMessageValue(branch_msg));
                 }
                 _ => {}
+            }
+        }
+
+        Ok(result)
+    }
+
+    pub fn effective_messages(&self, leaf_id: &str) -> anyhow::Result<Vec<Message>> {
+        let agent_msgs = self.effective_agent_messages(leaf_id)?;
+        let mut messages = Vec::new();
+        for am in agent_msgs {
+            if let Some(msg) = agent_message_to_llm(&am.0)? {
+                messages.push(msg);
             }
         }
         Ok(messages)
@@ -1728,40 +2109,78 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
                 _ => SessionEntry::Unknown { raw: value.clone() },
             },
             "compaction" => match value.get("summary").and_then(|v| v.as_str()) {
-                Some(summary) if !summary.is_empty() => SessionEntry::Compaction {
-                    summary: summary.into(),
-                    first_kept_entry_id: value
-                        .get("firstKeptEntryId")
-                        .or_else(|| value.get("first_kept_entry_id"))
-                        .and_then(|v| v.as_str())
-                        .map(Into::into),
-                    tokens_before: value
-                        .get("tokensBefore")
-                        .or_else(|| value.get("tokens_before"))
-                        .and_then(|v| v.as_u64()),
-                },
+                Some(summary) if !summary.is_empty() => {
+                    let retained_tail_val = value
+                        .get("retainedTail")
+                        .or_else(|| value.get("retained_tail"));
+                    let retained_tail = match retained_tail_val {
+                        Some(v) if v.is_array() => {
+                            let mut vec = Vec::new();
+                            for item in v.as_array().unwrap() {
+                                if item.is_object() {
+                                    vec.push(AgentMessageValue(item.clone()));
+                                } else {
+                                    anyhow::bail!("malformed compaction retainedTail array element at line {}", line_no + 1);
+                                }
+                            }
+                            Some(vec)
+                        }
+                        Some(v) if v.is_null() => {
+                            anyhow::bail!("retainedTail must not be null at line {}", line_no + 1)
+                        }
+                        Some(_) => anyhow::bail!(
+                            "malformed compaction retainedTail non-array value at line {}",
+                            line_no + 1
+                        ),
+                        None => None,
+                    };
+                    let details = value.get("details").cloned();
+                    let usage = value.get("usage").cloned();
+                    let from_hook = match value.get("fromHook").or_else(|| value.get("from_hook")) {
+                        Some(v) => match v.as_bool() {
+                            Some(b) => Some(b),
+                            None => anyhow::bail!(
+                                "malformed compaction fromHook at line {}",
+                                line_no + 1
+                            ),
+                        },
+                        None => None,
+                    };
+                    SessionEntry::Compaction {
+                        summary: summary.into(),
+                        first_kept_entry_id: value
+                            .get("firstKeptEntryId")
+                            .or_else(|| value.get("first_kept_entry_id"))
+                            .and_then(|v| v.as_str())
+                            .map(Into::into),
+                        tokens_before: value
+                            .get("tokensBefore")
+                            .or_else(|| value.get("tokens_before"))
+                            .and_then(|v| v.as_u64()),
+                        retained_tail,
+                        details,
+                        usage,
+                        from_hook,
+                    }
+                }
                 _ => SessionEntry::Unknown { raw: value.clone() },
             },
             "message" => {
-                let mut raw = value
-                    .get("message")
-                    .cloned()
-                    .unwrap_or_else(|| value.clone());
-                if let Some(obj) = raw.as_object_mut() {
-                    if let Some(text) = obj
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_owned)
-                    {
-                        obj.insert(
-                            "content".into(),
-                            serde_json::json!([{"type":"text", "text":text}]),
+                let msg_val = if let Some(m) = value.get("message") {
+                    if m.is_null() || !m.is_object() {
+                        anyhow::bail!(
+                            "line {}: message entry message field must be an object",
+                            line_no + 1
                         );
                     }
-                }
-                match serde_json::from_value::<Message>(raw) {
-                    Ok(msg) => SessionEntry::Message { message: msg },
-                    Err(_) => SessionEntry::Unknown { raw: value.clone() },
+                    m.clone()
+                } else if value.is_object() && value.get("role").is_some() {
+                    value.clone()
+                } else {
+                    anyhow::bail!("line {}: message entry missing message object", line_no + 1);
+                };
+                SessionEntry::Message {
+                    message: AgentMessageValue(msg_val),
                 }
             }
             "summary" => match value.get("summary").and_then(|v| v.as_str()) {
@@ -1782,14 +2201,32 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
             },
             "branch_summary" | "branch-summary" => {
                 match value.get("summary").and_then(|v| v.as_str()) {
-                    Some(summary) if !summary.is_empty() => SessionEntry::BranchSummary {
-                        summary: summary.into(),
-                        from_id: value
-                            .get("fromId")
-                            .or_else(|| value.get("from_id"))
-                            .and_then(|v| v.as_str())
-                            .map(Into::into),
-                    },
+                    Some(summary) if !summary.is_empty() => {
+                        let details = value.get("details").cloned();
+                        let usage = value.get("usage").cloned();
+                        let from_hook =
+                            match value.get("fromHook").or_else(|| value.get("from_hook")) {
+                                Some(v) => match v.as_bool() {
+                                    Some(b) => Some(b),
+                                    None => anyhow::bail!(
+                                        "malformed branch_summary fromHook at line {}",
+                                        line_no + 1
+                                    ),
+                                },
+                                None => None,
+                            };
+                        SessionEntry::BranchSummary {
+                            summary: summary.into(),
+                            from_id: value
+                                .get("fromId")
+                                .or_else(|| value.get("from_id"))
+                                .and_then(|v| v.as_str())
+                                .map(Into::into),
+                            details,
+                            usage,
+                            from_hook,
+                        }
+                    }
                     _ => SessionEntry::Unknown { raw: value.clone() },
                 }
             }
@@ -1871,7 +2308,8 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
         tree.append_with_id(parent_id.as_deref(), entry_id.clone(), entry)?;
         if let Some(node) = tree.nodes.last_mut() {
             node.source_entry_id = source_entry_id;
-            node.timestamp_ms = timestamp_ms;
+            node.timestamp_ms =
+                timestamp_ms.or_else(|| timestamp_str.as_deref().and_then(parse_iso_timestamp));
             node.timestamp_str = timestamp_str;
         }
         parent = Some(entry_id);
@@ -2072,6 +2510,10 @@ mod tests {
                 api: "openai-chat".into(),
                 provider: "openai".into(),
                 model: "gpt-4o".into(),
+                response_model: None,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage: Default::default(),
                 stop_reason: pi_ai::StopReason::Stop,
                 error_message: None,

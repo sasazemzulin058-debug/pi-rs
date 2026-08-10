@@ -117,7 +117,7 @@ fn event_to_json(ev: &AgentEvent) -> serde_json::Value {
             let mut text = String::new();
             if let Message::Assistant(a) = message {
                 for c in &a.content {
-                    if let Content::Text { text: t } = c {
+                    if let Content::Text { text: t, .. } = c {
                         text.push_str(t);
                     }
                 }

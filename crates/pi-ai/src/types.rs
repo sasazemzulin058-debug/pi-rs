@@ -29,30 +29,57 @@ pub enum ThinkingLevel {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Content {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            alias = "textSignature"
+        )]
+        text_signature: Option<String>,
+    },
     #[serde(rename = "thinking")]
     Thinking {
         thinking: String,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            alias = "thinkingSignature"
+        )]
         thinking_signature: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        redacted: Option<bool>,
     },
     #[serde(rename = "image")]
-    Image { data: String, mime_type: String },
+    Image {
+        data: String,
+        #[serde(alias = "mimeType")]
+        mime_type: String,
+    },
     #[serde(rename = "toolCall")]
     ToolCall {
         id: String,
         name: String,
         #[serde(default)]
         arguments: Value,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            default,
+            alias = "thoughtSignature"
+        )]
+        thought_signature: Option<String>,
     },
 }
 
 impl Content {
     pub fn text(s: impl Into<String>) -> Self {
-        Content::Text { text: s.into() }
+        Content::Text {
+            text: s.into(),
+            text_signature: None,
+        }
     }
     pub fn as_text(&self) -> Option<&str> {
-        if let Content::Text { text } = self {
+        if let Content::Text { text, .. } = self {
             Some(text)
         } else {
             None
@@ -66,12 +93,20 @@ pub struct Usage {
     pub input: u64,
     #[serde(default)]
     pub output: u64,
-    #[serde(default)]
+    #[serde(default, alias = "cacheRead")]
     pub cache_read: u64,
-    #[serde(default)]
+    #[serde(default, alias = "cacheWrite")]
     pub cache_write: u64,
-    #[serde(default)]
+    #[serde(default, alias = "totalTokens")]
     pub total_tokens: u64,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "cacheWrite1h"
+    )]
+    pub cache_write_1h: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning: Option<u64>,
     #[serde(default)]
     pub cost: Cost,
 }
@@ -84,9 +119,9 @@ pub struct Cost {
     pub input: f64,
     #[serde(default)]
     pub output: f64,
-    #[serde(default)]
+    #[serde(default, alias = "cacheRead")]
     pub cache_read: f64,
-    #[serde(default)]
+    #[serde(default, alias = "cacheWrite")]
     pub cache_write: f64,
     #[serde(default)]
     pub total: f64,
@@ -130,6 +165,7 @@ pub enum StopReason {
     ToolUse,
     Error,
     Aborted,
+    Pending,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,10 +189,31 @@ pub struct AssistantMessage {
     pub api: String,
     pub provider: String,
     pub model: String,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "responseModel"
+    )]
+    pub response_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default, alias = "responseId")]
+    pub response_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub diagnostics: Option<Value>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "rawStopReason"
+    )]
+    pub raw_stop_reason: Option<String>,
     #[serde(default)]
     pub usage: Usage,
+    #[serde(alias = "stopReason")]
     pub stop_reason: StopReason,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "errorMessage"
+    )]
     pub error_message: Option<String>,
     #[serde(default = "now_ms")]
     pub timestamp: i64,
@@ -164,10 +221,23 @@ pub struct AssistantMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultMessage {
+    #[serde(alias = "toolCallId")]
     pub tool_call_id: String,
+    #[serde(alias = "toolName")]
     pub tool_name: String,
     pub content: Vec<Content>,
+    #[serde(alias = "isError")]
     pub is_error: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub details: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub usage: Option<Usage>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "addedToolNames"
+    )]
+    pub added_tool_names: Option<Vec<String>>,
     #[serde(default = "now_ms")]
     pub timestamp: i64,
 }

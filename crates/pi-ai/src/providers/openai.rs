@@ -114,11 +114,12 @@ fn convert_messages(system_prompt: Option<&str>, messages: &[Message]) -> Vec<Va
                 let mut tool_calls: Vec<Value> = Vec::new();
                 for c in &a.content {
                     match c {
-                        Content::Text { text: t } => text.push_str(t),
+                        Content::Text { text: t, .. } => text.push_str(t),
                         Content::ToolCall {
                             id,
                             name,
                             arguments,
+                            ..
                         } => {
                             tool_calls.push(json!({
                                 "id": id,
@@ -398,7 +399,10 @@ impl Provider for OpenAiProvider {
 
             let mut out_content: Vec<Content> = Vec::new();
             if text_started {
-                out_content.push(Content::Text { text: text_buf.clone() });
+                out_content.push(Content::Text {
+                    text: text_buf.clone(),
+                    text_signature: None,
+                });
             }
             for (i, tc) in tool_calls {
                 if tc.id.trim().is_empty() || tc.name.trim().is_empty() {
@@ -435,6 +439,7 @@ impl Provider for OpenAiProvider {
                     id: tc.id,
                     name: tc.name,
                     arguments: args,
+                    thought_signature: None,
                 });
             }
 
@@ -443,7 +448,11 @@ impl Provider for OpenAiProvider {
                 content: out_content,
                 api,
                 provider,
-                model: response_model.unwrap_or(model_id),
+                model: response_model.clone().unwrap_or(model_id),
+                response_model,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage,
                 stop_reason: stop,
                 error_message: None,

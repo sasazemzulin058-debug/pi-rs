@@ -91,7 +91,7 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
                 let mut parts: Vec<Value> = Vec::new();
                 for c in &a.content {
                     match c {
-                        Content::Text { text } => parts.push(json!({"text": text})),
+                        Content::Text { text, .. } => parts.push(json!({"text": text})),
                         Content::ToolCall {
                             name, arguments, ..
                         } => {
@@ -347,10 +347,18 @@ impl Provider for GoogleProvider {
             }
             let mut out_content: Vec<Content> = Vec::new();
             if text_started {
-                out_content.push(Content::Text { text: text_buf });
+                out_content.push(Content::Text {
+                    text: text_buf,
+                    text_signature: None,
+                });
             }
             for (id, name, args) in tool_blocks {
-                out_content.push(Content::ToolCall { id, name, arguments: args });
+                out_content.push(Content::ToolCall {
+                    id,
+                    name,
+                    arguments: args,
+                    thought_signature: None,
+                });
             }
             let _ = text_index;
             usage.cost = usage.compute_cost(&pricing);
@@ -358,7 +366,11 @@ impl Provider for GoogleProvider {
                 content: out_content,
                 api,
                 provider,
-                model: response_model.unwrap_or(model_id),
+                model: response_model.clone().unwrap_or(model_id),
+                response_model,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage,
                 stop_reason: stop,
                 error_message: None,

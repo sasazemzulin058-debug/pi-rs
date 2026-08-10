@@ -70,11 +70,12 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
                 let mut tool_calls: Vec<Value> = Vec::new();
                 for c in &a.content {
                     match c {
-                        Content::Text { text: t } => text.push_str(t),
+                        Content::Text { text: t, .. } => text.push_str(t),
                         Content::ToolCall {
                             id,
                             name,
                             arguments,
+                            ..
                         } => {
                             tool_calls.push(json!({
                                 "type": "function_call",
@@ -422,7 +423,10 @@ impl Provider for OpenAiResponsesProvider {
 
             let mut out_content: Vec<Content> = Vec::new();
             if text_started {
-                out_content.push(Content::Text { text: text_buf.clone() });
+                out_content.push(Content::Text {
+                    text: text_buf.clone(),
+                    text_signature: None,
+                });
             }
             for (i, tc) in tool_calls.into_iter().enumerate() {
                 let args: Value = if tc.args.is_empty() {
@@ -450,6 +454,7 @@ impl Provider for OpenAiResponsesProvider {
                     id: tc.id,
                     name: tc.name,
                     arguments: args,
+                    thought_signature: None,
                 });
             }
 
@@ -457,7 +462,11 @@ impl Provider for OpenAiResponsesProvider {
                 content: out_content,
                 api,
                 provider,
-                model: model_id,
+                model: model_id.clone(),
+                response_model: Some(model_id),
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage,
                 stop_reason: stop,
                 error_message: None,
