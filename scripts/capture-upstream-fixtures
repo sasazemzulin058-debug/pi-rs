@@ -136,6 +136,14 @@ def main(argv=None, adapters=ADAPTERS):
     is_staging = bool(args.staging_dir)
     if is_staging and is_write:
         parser.error("--staging-dir cannot be combined with --write")
+    if is_staging:
+        if os.path.exists(args.staging_dir):
+            if not os.path.isdir(args.staging_dir):
+                parser.error("--staging-dir must be a directory")
+            if os.listdir(args.staging_dir):
+                parser.error("--staging-dir must be empty")
+        else:
+            os.makedirs(args.staging_dir)
 
     manifest = load_manifest()
     req_cases = manifest.get("requiredCaseIds", {})
@@ -247,7 +255,7 @@ def main(argv=None, adapters=ADAPTERS):
             "adapters": {cid: adapters[cid].__name__ for cid in milestone_cases if cid in adapters},
             "perCaseCanonicalHashes": per_case_hashes,
             "corpusDigest": calc_digest,
-            "mode": "write" if is_write else "verify-committed",
+            "mode": "staging" if is_staging else ("write" if is_write else "verify-committed"),
             "capturedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
 

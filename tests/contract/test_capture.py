@@ -88,6 +88,15 @@ class TestCapture(unittest.TestCase):
             )
         self.assertIn("dirty", str(ctx.exception).lower())
 
+    def test_staging_rejects_non_empty_directory(self):
+        out_dir = os.path.join(self.tmpdir, "staged_output")
+        os.makedirs(out_dir)
+        with open(os.path.join(out_dir, "existing.txt"), "w") as f:
+            f.write("existing")
+        with self.assertRaises(SystemExit) as ctx:
+            capture_main(argv=["--milestone", "M1a", "--staging-dir", out_dir], adapters={})
+        self.assertEqual(ctx.exception.code, 2)
+
     def test_target_staging_with_output_directory(self):
         out_dir = os.path.join(self.tmpdir, "staged_output")
         env = dict(os.environ, PI_UPSTREAM_ROOT=self.fake_upstream)
@@ -121,6 +130,8 @@ class TestCapture(unittest.TestCase):
             m = json.load(f)
             self.assertEqual(m["reference"]["version"], "0.83.0")
             self.assertEqual(m["reference"]["commit"], self.head_commit)
+        with open(os.path.join(out_dir, "capture-report.json"), "r") as f:
+            self.assertEqual(json.load(f)["mode"], "staging")
 
 if __name__ == "__main__":
     unittest.main()

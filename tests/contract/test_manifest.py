@@ -44,6 +44,14 @@ class TestFixtureManifest(unittest.TestCase):
         self.assertEqual(res_m1a.returncode, 0, f"M1a validate-fixture-manifest failed: {res_m1a.stderr}")
         self.assertIn("Manifest validation PASSED", res_m1a.stdout)
 
+        missing_dir = os.path.join(root, "definitely-missing-fixtures-dir")
+        res_missing = subprocess.run(
+            ["python3", validator_script, "--fixtures-dir", missing_dir],
+            capture_output=True, text=True
+        )
+        self.assertNotEqual(res_missing.returncode, 0)
+        self.assertIn("Fixtures directory does not exist", res_missing.stdout)
+
     def test_m1a_cases_have_truthful_capture_state(self):
         manifest = load_manifest()
         req_cases = manifest.get("requiredCaseIds", {})

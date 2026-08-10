@@ -12,10 +12,14 @@ def main():
 
     try:
         manifest_path = args.manifest_path
-        if manifest_path is None and args.fixtures_dir is not None:
+        if args.fixtures_dir is not None:
             import os
+            if not os.path.isdir(args.fixtures_dir):
+                raise ValueError(f"Fixtures directory does not exist: {args.fixtures_dir}")
             cand = os.path.join(args.fixtures_dir, "manifest.json")
-            if os.path.exists(cand):
+            if not os.path.isfile(cand):
+                raise ValueError(f"Manifest not found in fixtures directory: {cand}")
+            if manifest_path is None:
                 manifest_path = cand
 
         manifest = load_manifest(manifest_path) if manifest_path else load_manifest()

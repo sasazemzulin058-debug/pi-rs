@@ -8,7 +8,7 @@
 
 - Target version: `0.83.0`
 - Target commit: `f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee`
-- Status: IN_PROGRESS at OM-4 (hosted hydration works; first 0.83 capture reached adapters but failed closed on old committed corpus digest; staging mode now added locally)
+- Status: IN_PROGRESS at OM-8 (0.83 oracle published locally; comparator and local Termux pass; hosted CI publication gate pending)
 - Start state: repository has no tracked implementation diff; checkpoint and `.pi-subagents/` are untracked. Upstream checkout has pre-existing untracked temporary directories; left unchanged.
 
 ## Steps & Progress
@@ -16,12 +16,13 @@
 - [x] OM-1: Confirm target commit `f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee` as 0.83.0 oracle reference (commit exists; package reports 0.83.0).
 - [x] OM-2: Diff semantic changes between 2efa728d and f0deb8dd in upstream pi-mono (diff inspected; changes span `packages/ai` and `packages/coding-agent`).
 - [x] OM-3: Verify pi-mono checkout at f0deb8dd reports version 0.83.0.
-- [ ] OM-4: Recapture upstream oracle fixtures at f0deb8dd (staging mode added locally; hosted rerun pending; committed 0.82.1 fixtures unchanged).
-- [ ] OM-5: Commit semantic fixture diffs; no relabeling old 0.82.1 outputs (held; 0.82.1 fixtures unchanged).
-- [ ] OM-6: Update manifest.json (reference version 0.83.0, commit f0deb8dd..., recomputed lockfileSha256 and captureEnvironment.digest) (held; manifest unchanged).
+- [x] OM-4: Recapture upstream oracle fixtures at f0deb8dd (runs `31418670026` and `31418780296` passed; staged manifest validates; digest deterministic `sha256:5d2bb11548020fbe246fbd7aa78ed76f94644a4babe8faca67c7a04c2613022a`).
+- [x] OM-5: Review semantic fixture diff; M1a expected/hash payloads unchanged, target manifest metadata/digest changed, and obsolete actual sidecars absent from staged artifact.
+- [x] OM-6: Update manifest.json to 0.83.0 target, lock SHA, and staged M1a corpus digest.
 - [x] OM-7: Update `.github/workflows/capture-reference.yml` pinned commit and lock SHA to exact 0.83.0 target; parent GitHub run `31414297025` verified checkout, npm hydration, and generated model JSON.
-- [ ] OM-8: Re-run M1a comparisons and record state (manifest validation passed; full comparison not run).
-- [ ] OM-9: Ensure version-independent case-set validation in `contract_fixture_lib.py` (not started).
+- [x] OM-8: Re-run M1a comparisons; local `sh ./scripts/verify-termux` passes all 13/13 M1a cases against published 0.83 manifest.
+- [x] Capture safety gates: explicit nonexistent `--fixtures-dir` fails closed; non-empty `--staging-dir` rejected; staging capture report declares `mode: staging`; focused negative/report tests added.
+- [ ] OM-9: Ensure version-independent case-set validation in `contract_fixture_lib.py` (defer until post-publication review).
 
 ## Capture attempt
 
@@ -72,4 +73,7 @@ python3 scripts/capture-upstream-fixtures --milestone M1a \\
 - `python3 scripts/validate-fixture-manifest --milestone M1a` → `Manifest validation PASSED`.
 - `python3 scripts/check-doc-consistency` → passed.
 - `sh ./scripts/verify-termux` → 13/13 cases passed.
+- Hosted capture runs `31418670026` and `31418780296` passed with identical target corpus digest.
+- Downloaded staged 0.83 manifest validation passed.
 - Local committed oracle remains unchanged at 0.82.1.
+- Post-gate validation: contract tests 52/52, manifest validation passed, doc consistency passed, Termux verification passed.

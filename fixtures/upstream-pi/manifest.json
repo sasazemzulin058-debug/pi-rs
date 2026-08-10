@@ -2,12 +2,12 @@
   "schemaVersion": 2,
   "reference": {
     "package": "@earendil-works/pi-coding-agent",
-    "version": "0.82.1",
-    "commit": "2efa728d2ee90ef597626e96b1e28ef2b279f07c",
-    "lockfileSha256": "472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
+    "version": "0.83.0",
+    "commit": "f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee",
+    "lockfileSha256": "cc00fd4bfdc43f30ac7892de8dd46e5108c8b966b4941683bac42ee0587771d7"
   },
   "corpusDigest": {
-    "M1a": "sha256:1337a96b4996adb6a4ec87f8819ee2421385299fbc568a6e86af224cbf71d8f0"
+    "M1a": "sha256:5d2bb11548020fbe246fbd7aa78ed76f94644a4babe8faca67c7a04c2613022a"
   },
   "requiredCaseIds": {
     "M0": [],
