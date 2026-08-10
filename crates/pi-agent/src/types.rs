@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -145,8 +146,94 @@ impl AgentConfig {
 }
 
 /// Events emitted by the agent loop, mirroring `AgentEvent` in TS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueMode {
+    All,
+    OneAtATime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionPhase {
+    Idle,
+    Executing,
+    Steering,
+    Compacting,
+    Settled,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentSessionState {
+    pub phase: SessionPhase,
+    pub messages: Vec<Message>,
+    pub input_queue: VecDeque<Message>,
+    pub steering_queue: VecDeque<Message>,
+    pub queue_mode: QueueMode,
+    pub cancelled: bool,
+    pub settled: bool,
+}
+
+impl AgentSessionState {
+    pub fn new(messages: Vec<Message>) -> Self {
+        Self {
+            phase: SessionPhase::Idle,
+            messages,
+            input_queue: VecDeque::new(),
+            steering_queue: VecDeque::new(),
+            queue_mode: QueueMode::All,
+            cancelled: false,
+            settled: false,
+        }
+    }
+
+    pub fn queue_followup(&mut self, message: Message) -> crate::error::Result<()> {
+        if self.settled {
+            return Err(crate::error::AgentError::Other(
+                "session already settled".into(),
+            ));
+        }
+        self.input_queue.push_back(message);
+        Ok(())
+    }
+
+    pub fn queue_steering(&mut self, message: Message) -> crate::error::Result<()> {
+        if self.settled {
+            return Err(crate::error::AgentError::Other(
+                "session already settled".into(),
+            ));
+        }
+        self.steering_queue.push_back(message);
+        Ok(())
+    }
+
+    pub fn cancel(&mut self) {
+        self.cancelled = true;
+    }
+
+    pub fn take_inputs(&mut self) -> Vec<Message> {
+        if !self.steering_queue.is_empty() {
+            match self.queue_mode {
+                QueueMode::All => self.steering_queue.drain(..).collect(),
+                QueueMode::OneAtATime => self.steering_queue.pop_front().into_iter().collect(),
+            }
+        } else {
+            match self.queue_mode {
+                QueueMode::All => self.input_queue.drain(..).collect(),
+                QueueMode::OneAtATime => self.input_queue.pop_front().into_iter().collect(),
+            }
+        }
+    }
+}
+
+/// Queue/state seam for U2. Runtime execution remains owned by `agent_loop`.
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
+    PhaseChange {
+        phase: SessionPhase,
+    },
+    Settlement {
+        messages: Vec<Message>,
+        cancelled: bool,
+    },
     AgentStart,
     AgentEnd {
         messages: Vec<Message>,

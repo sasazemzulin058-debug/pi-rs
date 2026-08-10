@@ -60,6 +60,12 @@ fn enc(ev: AgentEvent) -> serde_json::Value {
             "tool_name": tool_name,
             "reason": reason,
         }),
+        AgentEvent::PhaseChange { phase } => {
+            json!({"type": "phase_change", "phase": format!("{phase:?}")})
+        }
+        AgentEvent::Settlement { cancelled, .. } => {
+            json!({"type": "settlement", "cancelled": cancelled})
+        }
         AgentEvent::AgentEnd { .. } => serde_json::Value::Null,
     }
 }

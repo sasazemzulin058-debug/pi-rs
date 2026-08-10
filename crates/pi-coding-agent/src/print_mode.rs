@@ -87,6 +87,7 @@ async fn run_human(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) {
             AgentEvent::PermissionDenied { tool_name, reason } => {
                 eprintln!("✗ permission denied for {tool_name}: {reason}");
             }
+            AgentEvent::PhaseChange { .. } | AgentEvent::Settlement { .. } => {}
             _ => {}
         }
     }
@@ -153,6 +154,12 @@ fn event_to_json(ev: &AgentEvent) -> serde_json::Value {
             "tool_name": tool_name,
             "reason": reason,
         }),
+        AgentEvent::PhaseChange { phase } => {
+            json!({"type": "phase_change", "phase": format!("{phase:?}")})
+        }
+        AgentEvent::Settlement { cancelled, .. } => {
+            json!({"type": "settlement", "cancelled": cancelled})
+        }
         // AgentEnd is emitted by run_print after the channel closes so we know
         // the final state (stopped_at_turn_limit, etc.).
         AgentEvent::AgentEnd { .. } => serde_json::Value::Null,
