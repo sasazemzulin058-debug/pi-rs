@@ -2,6 +2,7 @@
 //! `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.jsonl`, list them, and load by id.
 //! Legacy JSON loads read-only; explicit upstream import APIs create native JSONL.
 
+use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -19,6 +20,235 @@ pub enum SessionOrigin {
 
 fn default_native() -> SessionOrigin {
     SessionOrigin::Native
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionEntry {
+    Message {
+        message: Message,
+    },
+    ModelChange {
+        model_id: String,
+        provider: String,
+    },
+    Summary {
+        summary: String,
+        summarized_entry_ids: Vec<String>,
+    },
+    BranchSummary {
+        summary: String,
+    },
+    Custom {
+        key: String,
+        value: serde_json::Value,
+    },
+    CustomMessage {
+        key: String,
+        message: Message,
+    },
+    Label {
+        label: String,
+    },
+    SessionInfo {
+        info: serde_json::Value,
+    },
+    Unknown {
+        raw: serde_json::Value,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionTreeNode {
+    pub entry_id: String,
+    pub parent_id: Option<String>,
+    pub entry: SessionEntry,
+    pub children: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SessionTree {
+    nodes: Vec<SessionTreeNode>,
+    index: HashMap<String, usize>,
+    active_leaf: Option<String>,
+}
+
+impl SessionTree {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn active_leaf(&self) -> Option<&str> {
+        self.active_leaf.as_deref()
+    }
+
+    pub fn nodes(&self) -> impl Iterator<Item = &SessionTreeNode> {
+        self.nodes.iter()
+    }
+
+    pub fn to_json(&self) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "active_leaf": self.active_leaf,
+            "entries": self.nodes.iter().map(|node| serde_json::json!({
+                "entry_id": node.entry_id,
+                "parent_id": node.parent_id,
+                "entry": node.entry,
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    pub fn from_json(value: serde_json::Value) -> anyhow::Result<Self> {
+        #[derive(Deserialize)]
+        struct Wire {
+            active_leaf: Option<String>,
+            entries: Vec<WireEntry>,
+        }
+        #[derive(Deserialize)]
+        struct WireEntry {
+            entry_id: String,
+            parent_id: Option<String>,
+            entry: SessionEntry,
+        }
+        let wire: Wire = serde_json::from_value(value)?;
+        let mut tree = Self::new();
+        for item in wire.entries {
+            let expected_parent = item.parent_id.as_deref();
+            let actual = tree.append(expected_parent, item.entry)?;
+            anyhow::ensure!(actual == item.entry_id, "non-canonical tree entry id");
+        }
+        if let Some(leaf) = wire.active_leaf {
+            tree.set_active_leaf(&leaf)?;
+        }
+        Ok(tree)
+    }
+
+    pub fn append(
+        &mut self,
+        parent_id: Option<&str>,
+        entry: SessionEntry,
+    ) -> anyhow::Result<String> {
+        if let Some(parent) = parent_id {
+            anyhow::ensure!(
+                self.index.contains_key(parent),
+                "unknown parent entry: {parent}"
+            );
+        } else {
+            anyhow::ensure!(self.nodes.is_empty(), "root entry already exists");
+        }
+        let entry_id = format!("e{}", self.nodes.len());
+        let index = self.nodes.len();
+        self.nodes.push(SessionTreeNode {
+            entry_id: entry_id.clone(),
+            parent_id: parent_id.map(str::to_owned),
+            entry,
+            children: Vec::new(),
+        });
+        self.index.insert(entry_id.clone(), index);
+        if let Some(parent) = parent_id {
+            self.nodes[*self.index.get(parent).expect("checked parent")]
+                .children
+                .push(entry_id.clone());
+        }
+        self.active_leaf = Some(entry_id.clone());
+        Ok(entry_id)
+    }
+
+    pub fn branch_at(&mut self, entry_id: &str, entry: SessionEntry) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            self.index.contains_key(entry_id),
+            "unknown branch entry: {entry_id}"
+        );
+        self.append(Some(entry_id), entry)
+    }
+
+    pub fn set_active_leaf(&mut self, entry_id: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.index.contains_key(entry_id),
+            "unknown leaf entry: {entry_id}"
+        );
+        self.active_leaf = Some(entry_id.to_owned());
+        Ok(())
+    }
+
+    pub fn effective_context(&self, leaf_id: &str) -> anyhow::Result<Vec<&SessionEntry>> {
+        let mut path = Vec::new();
+        let mut current = Some(leaf_id);
+        while let Some(id) = current {
+            let node = self
+                .index
+                .get(id)
+                .and_then(|i| self.nodes.get(*i))
+                .ok_or_else(|| anyhow::anyhow!("unknown entry: {id}"))?;
+            path.push(&node.entry);
+            current = node.parent_id.as_deref();
+        }
+        path.reverse();
+        Ok(path)
+    }
+
+    pub fn effective_messages(&self, leaf_id: &str) -> anyhow::Result<Vec<&Message>> {
+        Ok(self
+            .effective_context(leaf_id)?
+            .into_iter()
+            .filter_map(|entry| match entry {
+                SessionEntry::Message { message } | SessionEntry::CustomMessage { message, .. } => {
+                    Some(message)
+                }
+                _ => None,
+            })
+            .collect())
+    }
+}
+
+const TREE_SCHEMA_VERSION: u32 = 3;
+
+pub fn save_tree_jsonl(path: &Path, tree: &SessionTree) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("tree path has no parent"))?;
+    ensure_private_dir(parent)?;
+    let _lock = lock_session(path)?;
+    let mut file = std::fs::File::create(path)?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({
+            "type": "session", "schema": NATIVE_SCHEMA, "version": TREE_SCHEMA_VERSION,
+            "active_leaf": tree.active_leaf,
+        })
+    )?;
+    for node in tree.nodes() {
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "type": "entry", "version": TREE_SCHEMA_VERSION,
+                "entry_id": node.entry_id, "parent_id": node.parent_id, "entry": node.entry,
+            })
+        )?;
+    }
+    file.sync_all()?;
+    Ok(())
+}
+
+pub fn load_tree_jsonl(path: &Path) -> anyhow::Result<SessionTree> {
+    let text = std::fs::read_to_string(path)?;
+    let mut lines = text.lines();
+    let header: serde_json::Value =
+        serde_json::from_str(lines.next().ok_or_else(|| anyhow::anyhow!("empty tree"))?)?;
+    anyhow::ensure!(header.get("schema").and_then(|v| v.as_str()) == Some(NATIVE_SCHEMA));
+    anyhow::ensure!(
+        header.get("version").and_then(|v| v.as_u64()) == Some(TREE_SCHEMA_VERSION as u64)
+    );
+    let mut entries = Vec::new();
+    for line in lines {
+        let value: serde_json::Value = serde_json::from_str(line)?;
+        anyhow::ensure!(value.get("type").and_then(|v| v.as_str()) == Some("entry"));
+        entries.push(serde_json::json!({"entry_id": value.get("entry_id"), "parent_id": value.get("parent_id"), "entry": value.get("entry")}));
+    }
+    SessionTree::from_json(
+        serde_json::json!({"active_leaf": header.get("active_leaf"), "entries": entries}),
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -659,6 +889,45 @@ pub fn import_pi_session(path: &Path) -> anyhow::Result<PiSessionImport> {
         checksum_sha256,
         source_path: path.to_path_buf(),
     })
+}
+
+pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let mut tree = SessionTree::new();
+    let mut parent: Option<String> = None;
+    for (line_no, line) in text.lines().enumerate() {
+        let value: serde_json::Value = serde_json::from_str(line)
+            .with_context(|| format!("malformed JSON at line {}", line_no + 1))?;
+        let record_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if record_type == "session" {
+            continue;
+        }
+        let entry = match record_type {
+            "model_change" => SessionEntry::ModelChange {
+                model_id: value
+                    .get("modelId")
+                    .or_else(|| value.get("model"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .into(),
+                provider: value
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .into(),
+            },
+            "message" => {
+                let raw = value.get("message").cloned().unwrap_or(value);
+                SessionEntry::Message {
+                    message: serde_json::from_value(raw)?,
+                }
+            }
+            _ => SessionEntry::Unknown { raw: value },
+        };
+        let entry_id = tree.append(parent.as_deref(), entry)?;
+        parent = Some(entry_id);
+    }
+    Ok(tree)
 }
 
 pub fn import_as_cow(import: &PiSessionImport) -> Session {
