@@ -29,12 +29,12 @@ jobs:
           git clone https://github.com/earendil-works/pi-mono.git \
             upstream-pi-mono
           cd upstream-pi-mono
-          git checkout 2efa728d2ee90ef597626e96b1e28ef2b279f07c
+          git checkout f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee
 
       - name: Verify lockfile SHA-256
         run: |
           # Upstream lockfile SHA-256 must match exactly
-          EXP="472f0726dc79f3b38df58d8a8bce96bf56fbf993a134b49aabc54947b8461e59"
+          EXP="cc00fd4bfdc43f30ac7892de8dd46e5108c8b966b4941683bac42ee0587771d7"
           ACT=$(sha256sum upstream-pi-mono/package-lock.json | cut -d' ' -f1)
           test "$ACT" = "$EXP"
 
@@ -65,7 +65,12 @@ jobs:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
         run: |
           python3 scripts/capture-upstream-fixtures \
-            --milestone "${{ github.event.inputs.milestone }}"
+            --milestone "${{ github.event.inputs.milestone }}" \
+            --reference-version "0.83.0" \
+            --reference-commit \
+            "f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee" \
+            --reference-lockfile-sha256 \
+            "cc00fd4bfdc43f30ac7892de8dd46e5108c8b966b4941683bac42ee0587771d7"
 
       - name: Validate captured fixture manifest
         run: |
@@ -74,7 +79,7 @@ jobs:
 
       - name: Archive captured fixtures
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: captured-fixtures-${{ github.event.inputs.milestone }}
           path: fixtures/upstream-pi/
