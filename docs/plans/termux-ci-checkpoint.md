@@ -17,6 +17,7 @@
 - Local Termux device evidence vs GitHub self-hosted gate:
   - Local Termux device runs `sh ./scripts/verify-termux` automatically and passes all local checks (49 python contract tests + cargo test suite + M1a contract fixtures pass).
   - GitHub self-hosted runner gate remains BLOCKED pending external GitHub environment setup (`termux-attestation` environment + self-hosted runner labeled `["self-hosted", "termux"]` + `vars.TERMUX_RUNNER_LABELS`).
+  - Observed CI run `31413191171` (`commit 39a4941`): standard hosted test/docs/supply-chain jobs pass, `runner-config` fails fast with `vars.TERMUX_RUNNER_LABELS empty` as expected for missing external configuration.
 - Current evidence boundary: fixture oracle remains `0.82.1`; D4 completion proves CI wiring and current corpus only, not `0.83.0` parity.
 
 ## Tasks & Checkpoints
