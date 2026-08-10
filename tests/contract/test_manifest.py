@@ -13,15 +13,23 @@ class TestFixtureManifest(unittest.TestCase):
             manifest = load_manifest()
         except FileNotFoundError as e:
             self.fail(f"Manifest file missing: {e}")
-            
-        errors = validate_manifest(manifest)
+
+        fixtures_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "fixtures", "upstream-pi")
+        errors = validate_manifest(manifest, fixtures_dir=fixtures_dir)
         self.assertEqual(errors, [], f"Manifest contains validation errors:\n" + "\n".join(errors))
 
     def test_m0_validation(self):
         manifest = load_manifest()
-        errors = validate_manifest(manifest, milestone="M0")
+        fixtures_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "fixtures", "upstream-pi")
+        errors = validate_manifest(manifest, milestone="M0", fixtures_dir=fixtures_dir)
         self.assertEqual(errors, [], f"M0 manifest validation contains errors:\n" + "\n".join(errors))
-        
+
+    def test_m1a_full_corpus_validation(self):
+        manifest = load_manifest()
+        fixtures_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "fixtures", "upstream-pi")
+        errors = validate_manifest(manifest, milestone="M1a", fixtures_dir=fixtures_dir)
+        self.assertEqual(errors, [], f"M1a full corpus validation contains errors:\n" + "\n".join(errors))
+
     def test_m1a_cases_have_truthful_capture_state(self):
         manifest = load_manifest()
         req_cases = manifest.get("requiredCaseIds", {})

@@ -13,7 +13,7 @@ from contract_fixture_lib import (
 
 def run_self_test():
     print("Running comparator self-test...")
-    
+
     # Base structure
     expected = {
         "uuid": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
@@ -35,7 +35,7 @@ def run_self_test():
             }
         ]
     }
-    
+
     # 1. Mutate role
     mutated_role = json.loads(json.dumps(expected))
     mutated_role["messages"][0]["role"] = "assistant"
@@ -45,7 +45,7 @@ def run_self_test():
         return False
     print(" - Mutated role correctly detected:")
     print(f"   {diff_role.replace(chr(10), chr(10)+'   ')}")
-    
+
     # 2. Mutate stop reason
     mutated_stop = json.loads(json.dumps(expected))
     mutated_stop["messages"][1]["stop_reason"] = "length"
@@ -55,7 +55,7 @@ def run_self_test():
         return False
     print(" - Mutated stop reason correctly detected:")
     print(f"   {diff_stop.replace(chr(10), chr(10)+'   ')}")
-    
+
     # 3. Mutate tool order
     mutated_order = json.loads(json.dumps(expected))
     mutated_order["messages"][1]["tool_calls"] = [
@@ -68,7 +68,7 @@ def run_self_test():
         return False
     print(" - Mutated tool order correctly detected:")
     print(f"   {diff_order.replace(chr(10), chr(10)+'   ')}")
-    
+
     # 4. Mutate session parent ID
     mutated_parent = json.loads(json.dumps(expected))
     mutated_parent["parent_id"] = "99999999-9999-9999-9999-999999999999"
@@ -78,7 +78,7 @@ def run_self_test():
         return False
     print(" - Mutated session parent ID correctly detected:")
     print(f"   {diff_parent.replace(chr(10), chr(10)+'   ')}")
-    
+
     print("Comparator self-test PASSED")
     return True
 
@@ -90,38 +90,42 @@ def main():
     parser.add_argument("--invariant-only", action="store_true", help="Compare only pi-rs-invariant cases")
     parser.add_argument("--exclude-case", action="append", default=[], help="Exclude case ID from comparison")
     args = parser.parse_args()
-    
+
     if args.self_test:
         success = run_self_test()
         sys.exit(0 if success else 1)
-        
+
     if not args.milestone:
         parser.error("--milestone is required unless --self-test is specified")
     if not args.actual:
         parser.error("--actual directory is required unless --self-test is specified")
-        
+
     try:
+        fixture_dir = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "fixtures", "upstream-pi"
+        )
         manifest = load_manifest()
-        manifest_errors = validate_manifest(manifest)
+        manifest_errors = validate_manifest(manifest, milestone=args.milestone, fixtures_dir=fixture_dir)
         if manifest_errors:
             for error in manifest_errors:
                 print(f"Manifest error: {error}")
             sys.exit(2)
         req_cases = manifest.get("requiredCaseIds", {})
         cases = manifest.get("cases", {})
-        
+
         target_milestones = [args.milestone]
-        
+
         has_errors = False
         skipped_count = 0
         failed_count = 0
         passed_count = 0
-        
+
         for m in target_milestones:
             if m not in req_cases:
                 print(f"Error: Milestone '{m}' not defined in manifest requiredCaseIds")
                 sys.exit(1)
-                
+
             selected_cases = [
                 cid for cid in req_cases[m]
                 if cid not in args.exclude_case and (not args.invariant_only or cases.get(cid, {}).get("oracle") == "pi-rs-invariant")
@@ -146,14 +150,14 @@ def main():
                 case_info = cases.get(case_id, {})
                 oracle = case_info.get("oracle")
                 captured = case_info.get("captured", False)
-                
+
                 fixture_dir = os.path.join(
                     os.path.dirname(os.path.dirname(__file__)),
                     "fixtures", "upstream-pi"
                 )
                 expected_file = os.path.join(fixture_dir, f"{case_id}.expected.json")
                 actual_file = os.path.join(args.actual, f"{case_id}.actual.json")
-                
+
                 if not os.path.exists(expected_file):
                     print(f"Case {case_id}: ERROR - expected fixture file missing at {expected_file}")
                     has_errors = True
@@ -178,7 +182,7 @@ def main():
                     has_errors = True
                     failed_count += 1
                     continue
-                    
+
                 hash_file = os.path.join(fixture_dir, f"{case_id}.raw-hash.txt")
                 if not os.path.exists(hash_file):
                     print(f"Case {case_id}: ERROR - raw-hash.txt missing at {hash_file}")
@@ -214,12 +218,12 @@ def main():
                 else:
                     print(f"Case {case_id}: PASSED")
                     passed_count += 1
-                    
+
         print("\nSummary:")
         print(f" - Passed: {passed_count}")
         print(f" - Pending/Skipped: {skipped_count}")
         print(f" - Failed/Errors: {failed_count}")
-        
+
         sys.exit(1 if has_errors else 0)
     except Exception as e:
         print(f"Error: {e}")
