@@ -28,7 +28,7 @@
 ### 1.2 Already implemented — do not rebuild
 
 | Surface | Current evidence | Current status |
-|---|---|---|
+| --- | --- | --- |
 | Workspace and package structure | `Cargo.toml`; three workspace members at version `0.83.0` | **implemented** |
 | Anthropic, OpenAI Chat, OpenAI Responses and Google provider modules | `crates/pi-ai/src/providers/` | **partial; provider modules exist, CLI routing/parity incomplete** |
 | SSE streaming and retry infrastructure | `crates/pi-ai/src/providers/openai.rs`, `crates/pi-ai/src/retry.rs` | **partial** |
@@ -598,7 +598,7 @@ These milestones follow release-blocker and delivery work. They are incremental 
 
 ### Milestone U3 — Tool parity
 
-- **Current status:** **partial**
+- **Current status:** **partial** (supported only for bounded UTF-8 text `read` fixture `tool.read.bounds`; `write`, `edit`, `grep`, `glob`/`find`, `ls`, image read, and streamed `bash` remain partial or deferred)
 - **Target:** **supported** declared built-in subset
 - **User scenario:** `read`, `bash`, `edit`, `write`, `grep`, `find/glob` and `ls` have predictable bounds, cancellation and mutation semantics.
 - **Current files:** `crates/pi-agent/src/tools/*.rs`, existing tool tests.

@@ -23,7 +23,7 @@ M1a fixture gate: all 13 required cases pass locally; hosted CI runs same gate e
 | `cli.print` | CLI | `--print` headless prompt execution | **supported** | `cli.print.basic` |
 | `agent.serial-tools` | Agent | Serial tool call validation, execution and cancellation | **supported** | `agent.serial-tool-loop` |
 | `provider.openai-chat` | Provider | OpenAI Chat Completions compatible SSE with local mock | **supported** | `provider.openai-chat.fragmented-sse` |
-| `tool.read` | Built-in Tool | Bounded text read with 1-indexed offsets | **supported** | `tool.read.bounds` |
+| `tool.read` | Built-in Tool | Bounded text read with 1-indexed offsets (bounded UTF-8 text fixture `tool.read.bounds`; write/edit/grep/glob/ls/image and streamed bash remain partial/deferred) | **supported** | `tool.read.bounds` |
 | `tool.bash` | Built-in Tool | Shell execution, process-group cancellation and reaping | **supported** | `tool.bash.cancel-descendants` |
 | `resources.context` | Resources | Global/current `AGENTS.md` or `CLAUDE.md` context discovery | **supported** | `resource.context-precedence` |
 | `resources.trust` | Resources | Trust decision data model; no project executable resource loading | **supported** | `resource.untrusted-project` |

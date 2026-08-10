@@ -137,12 +137,65 @@ def capture_resource_untrusted_project(upstream_root: str) -> Dict[str, Any]:
     return val if isinstance(val, dict) else {"result": val}
 
 def capture_tool_read_bounds(upstream_root: str) -> Dict[str, Any]:
-    """Capture case tool.read.bounds offline structure fallback."""
-    raw: Dict[str, Any] = {
-        "offset_1_indexed": True,
-        "default_limit": 2000,
-        "read_bytes_limit": 51200
-    }
+    """Capture read behavior by executing pinned pi-mono harness read tool."""
+    script = r'''import { NodeExecutionEnv } from "AGENT_NODE";
+import { createReadTool } from "AGENT_READ";
+import { mkdir, writeFile, rm } from "node:fs/promises";
+
+const root = process.argv[2];
+const env = new NodeExecutionEnv({ cwd: root });
+const context = { env };
+const files = {
+  "basic.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n",
+  "empty.txt": "",
+  "lines2500.txt": Array.from({length: 2500}, (_, i) => `line ${i + 1}`).join("\n") + "\n",
+  "multibyte.txt": Array.from({length: 3500}, (_, i) => `line ${i}: €€€€€`).join("\n") + "\n",
+  "huge_first_line.txt": "a".repeat(55000) + "\nline 2\n",
+};
+for (const [name, content] of Object.entries(files)) await writeFile(`${root}/${name}`, content);
+const tool = createReadTool();
+const cases = [
+  ["default_params", {path: "basic.txt"}],
+  ["offset_1", {path: "basic.txt", offset: 1}],
+  ["non_default_offset", {path: "basic.txt", offset: 3}],
+  ["explicit_limit", {path: "basic.txt", offset: 1, limit: 2}],
+  ["offset_beyond_eof", {path: "basic.txt", offset: 10}],
+  ["more_than_default_lines", {path: "lines2500.txt"}],
+  ["multibyte_near_50k", {path: "multibyte.txt"}],
+  ["first_line_exceeds_50k", {path: "huge_first_line.txt"}],
+  ["empty_file", {path: "empty.txt"}],
+];
+const scenarios = {};
+for (const [name, args] of cases) {
+  try {
+    const result = await tool.execute("read", args, undefined, undefined, context);
+    const output = result.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n");
+    scenarios[name] = {ok: true, output, byte_length: new TextEncoder().encode(output).byteLength};
+  } catch (error) {
+    scenarios[name] = {ok: false, error: error instanceof Error ? error.message : String(error)};
+  }
+}
+console.log(JSON.stringify({scenarios}));
+await rm(root, {recursive: true, force: true});
+'''
+    agent_node = Path(upstream_root) / "packages" / "agent" / "src" / "node.ts"
+    agent_read = Path(upstream_root) / "packages" / "agent" / "src" / "harness" / "tools" / "read.ts"
+    script = script.replace("AGENT_NODE", str(agent_node)).replace("AGENT_READ", str(agent_read))
+    with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
+        root = Path(tmp_dir) / "read-fixture"
+        root.mkdir()
+        script_path = Path(tmp_dir) / "capture-read.ts"
+        script_path.write_text(script, encoding="utf-8")
+        res = subprocess.run(
+            ["node", "--import", "tsx/esm", str(script_path), str(root)],
+            cwd=upstream_root, capture_output=True, text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"upstream read capture failed ({res.returncode}): {res.stderr.strip()}")
+        try:
+            raw = json.loads(res.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError(f"invalid upstream read capture output: {res.stdout!r}") from exc
     val = normalize_structure(raw)
     return val if isinstance(val, dict) else {"result": val}
 

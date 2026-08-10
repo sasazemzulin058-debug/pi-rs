@@ -1,4 +1,6 @@
 use futures::StreamExt;
+use pi_agent::tools::read::ReadTool;
+use pi_agent::types::AgentTool;
 use pi_agent::{run_agent_with_history, AgentConfig};
 use pi_ai::{
     now_ms, AssistantMessage, AssistantMessageEvent, Content, FakeProviderFactory, Message, Model,
@@ -272,16 +274,91 @@ async fn generate_invariant_actual_fixtures() {
         }),
     );
 
-    let read_bounds = (1usize, 2000usize, 51200usize);
-    assert!(read_bounds.0 == 1 && read_bounds.1 <= 2000 && read_bounds.2 <= 51200);
+    let read_dir = tempfile_dir("read-bounds");
+    fs::write(
+        read_dir.join("basic.txt"),
+        "line 1\nline 2\nline 3\nline 4\nline 5\n",
+    )
+    .expect("write basic read fixture");
+    fs::write(read_dir.join("empty.txt"), "").expect("write empty read fixture");
+    let lines2500 = (1..=2500)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    fs::write(read_dir.join("lines2500.txt"), lines2500).expect("write line read fixture");
+    let multibyte = (0..3500)
+        .map(|i| format!("line {i}: €€€€€"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    fs::write(read_dir.join("multibyte.txt"), multibyte).expect("write multibyte read fixture");
+    fs::write(
+        read_dir.join("huge_first_line.txt"),
+        format!("{}\nline 2\n", "a".repeat(55_000)),
+    )
+    .expect("write huge read fixture");
+    let read = ReadTool;
+    let mut read_bounds = serde_json::Map::new();
+    for (name, args) in [
+        (
+            "default_params",
+            serde_json::json!({"path": read_dir.join("basic.txt")}),
+        ),
+        (
+            "offset_1",
+            serde_json::json!({"path": read_dir.join("basic.txt"), "offset": 1}),
+        ),
+        (
+            "non_default_offset",
+            serde_json::json!({"path": read_dir.join("basic.txt"), "offset": 3}),
+        ),
+        (
+            "explicit_limit",
+            serde_json::json!({"path": read_dir.join("basic.txt"), "offset": 1, "limit": 2}),
+        ),
+        (
+            "offset_beyond_eof",
+            serde_json::json!({"path": read_dir.join("basic.txt"), "offset": 10}),
+        ),
+        (
+            "more_than_default_lines",
+            serde_json::json!({"path": read_dir.join("lines2500.txt")}),
+        ),
+        (
+            "multibyte_near_50k",
+            serde_json::json!({"path": read_dir.join("multibyte.txt")}),
+        ),
+        (
+            "first_line_exceeds_50k",
+            serde_json::json!({"path": read_dir.join("huge_first_line.txt")}),
+        ),
+        (
+            "empty_file",
+            serde_json::json!({"path": read_dir.join("empty.txt")}),
+        ),
+    ] {
+        let value = match read.execute("read", args).await {
+            Ok(result) => {
+                let mut text = result.content[0].as_text().unwrap().to_string();
+                if name == "first_line_exceeds_50k" {
+                    let huge_path = read_dir.join("huge_first_line.txt");
+                    text = text.replace(
+                        huge_path.to_str().expect("UTF-8 huge fixture path"),
+                        "huge_first_line.txt",
+                    );
+                }
+                serde_json::json!({"ok": true, "output": text, "byte_length": text.len()})
+            }
+            Err(error) => serde_json::json!({"ok": false, "error": error}),
+        };
+        read_bounds.insert(name.to_string(), value);
+    }
     write_actual(
         "tool.read.bounds",
-        serde_json::json!({
-            "offset_1_indexed": true,
-            "default_limit": read_bounds.1,
-            "read_bytes_limit": read_bounds.2,
-        }),
+        serde_json::json!({"scenarios": read_bounds}),
     );
+    let _ = fs::remove_dir_all(read_dir);
 
     let cancel_signal = "SIGTERM";
     assert_eq!(cancel_signal, "SIGTERM");

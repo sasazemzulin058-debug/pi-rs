@@ -1,8 +1,12 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::convert::TryFrom;
 use tokio::fs;
 
 use crate::types::{AgentTool, AgentToolResult};
+
+const MAX_LINES: usize = 2000;
+const MAX_BYTES: usize = 50 * 1024;
 
 pub struct ReadTool;
 
@@ -30,78 +34,117 @@ impl AgentTool for ReadTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or("missing 'path'")?;
-        let offset = args
-            .get("offset")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize);
+        let offset = match args.get("offset") {
+            None => 0,
+            Some(value) => value
+                .as_u64()
+                .ok_or("offset must be a positive integer")?
+                .checked_sub(1)
+                .ok_or("offset must be a positive integer")
+                .and_then(|n| usize::try_from(n).map_err(|_| "offset is too large"))?,
+        };
         let limit = args
             .get("limit")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize);
+            .map(|v| {
+                v.as_u64()
+                    .ok_or("limit must be a non-negative integer")
+                    .and_then(|n| usize::try_from(n).map_err(|_| "limit is too large"))
+            })
+            .transpose()?;
 
         let text = fs::read_to_string(path)
             .await
             .map_err(|e| format!("read {path}: {e}"))?;
-        let lines: Vec<&str> = text.lines().collect();
-
-        if lines.is_empty() {
-            return Ok(AgentToolResult::text(""));
-        }
-
-        // Standard Pi bounds defaults: max 400 lines, max 50KB total output
-        let max_lines = limit.unwrap_or(400);
-        let start = offset.map(|o| o.saturating_sub(1)).unwrap_or(0);
-
-        if start >= lines.len() {
+        let all_lines: Vec<&str> = text.split('\n').collect();
+        if offset >= all_lines.len() {
             return Err(format!(
-                "offset {start} is beyond end of file (file has {} lines)",
-                lines.len()
+                "Offset {} is beyond end of file ({} lines total)",
+                args.get("offset").and_then(Value::as_u64).unwrap_or(1),
+                all_lines.len()
             ));
         }
 
-        let max_end = start.saturating_add(max_lines);
-        let end = std::cmp::min(max_end, lines.len());
+        let end = limit
+            .map(|n| offset.saturating_add(n).min(all_lines.len()))
+            .unwrap_or(all_lines.len());
+        let selected = all_lines[offset..end].join("\n");
+        let selected_lines = split_read_lines(&selected);
+        let first_bytes = selected_lines.first().map(|line| line.len()).unwrap_or(0);
+        if first_bytes > MAX_BYTES {
+            let size = format_size(first_bytes);
+            return Ok(AgentToolResult::text(format!(
+                "[Line {} is {}, exceeds 50.0KB limit. Use bash: sed -n '{}p' {} | head -c 51200]",
+                offset + 1,
+                size,
+                offset + 1,
+                path
+            )));
+        }
 
-        let max_bytes = 50 * 1024;
-        let mut buf = String::new();
-        let mut lines_read = 0;
-        let mut truncated = false;
-
-        for (i, line) in lines[start..end].iter().enumerate() {
-            let line_fmt = format!("{:>5}\t{}\n", start + i + 1, line);
-            if buf.len() + line_fmt.len() > max_bytes {
-                truncated = true;
+        let mut output_lines = Vec::new();
+        let mut bytes: usize = 0;
+        for (index, line) in selected_lines.iter().enumerate() {
+            let line_bytes = line.len() + usize::from(index > 0);
+            if index >= MAX_LINES || bytes.saturating_add(line_bytes) > MAX_BYTES {
                 break;
             }
-            buf.push_str(&line_fmt);
-            lines_read += 1;
+            output_lines.push(*line);
+            bytes += line_bytes;
         }
-
-        if start + lines_read < lines.len() {
-            truncated = true;
-        }
-
-        if truncated {
-            let remaining = lines.len().saturating_sub(start + lines_read);
-            if remaining > 0 {
-                let suffix = format!("... ({} more lines, use offset to continue)\n", remaining);
-                if buf.len() + suffix.len() <= max_bytes {
-                    buf.push_str(&suffix);
-                } else if buf.len() < max_bytes {
-                    // Fits at least truncated suffix or clip buffer to remain strictly <= 50 KiB total output.
-                    let available = max_bytes.saturating_sub(suffix.len());
-                    if buf.len() > available {
-                        let mut cutoff = available;
-                        while cutoff > 0 && !buf.is_char_boundary(cutoff) {
-                            cutoff -= 1;
-                        }
-                        buf.truncate(cutoff);
-                    }
-                    buf.push_str(&suffix);
+        let truncated = output_lines.len() < selected_lines.len();
+        let output = if !truncated {
+            selected.clone()
+        } else {
+            output_lines.join("\n")
+        };
+        let start_line = offset + 1;
+        let end_line = start_line + output_lines.len().saturating_sub(1);
+        let mut result = if truncated {
+            let by_lines = output_lines.len() >= MAX_LINES;
+            format!(
+                "{}\n\n[Showing lines {}-{} of {}{} Use offset={} to continue.]",
+                output,
+                start_line,
+                end_line,
+                all_lines.len(),
+                if by_lines { "." } else { " (50.0KB limit)." },
+                end_line + 1
+            )
+        } else {
+            output
+        };
+        if !truncated {
+            if let Some(n) = limit {
+                let consumed = offset.saturating_add(n).min(all_lines.len());
+                if consumed < all_lines.len() {
+                    result.push_str(&format!(
+                        "\n\n[{} more lines in file. Use offset={} to continue.]",
+                        all_lines.len() - consumed,
+                        consumed + 1
+                    ));
                 }
             }
         }
+        Ok(AgentToolResult::text(result))
+    }
+}
 
-        Ok(AgentToolResult::text(buf))
+fn split_read_lines(content: &str) -> Vec<&str> {
+    let mut lines: Vec<&str> = content.split('\n').collect();
+    if content.is_empty() {
+        lines.clear();
+    } else if content.ends_with('\n') {
+        lines.pop();
+    }
+    lines
+}
+
+fn format_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{}B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1}KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     }
 }

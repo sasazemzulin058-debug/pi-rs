@@ -45,6 +45,39 @@ async fn write_then_read_roundtrips() {
 }
 
 #[tokio::test]
+async fn read_matches_upstream_trailing_newline_and_empty_bounds() {
+    let dir = scratch_dir();
+    let path = dir.join("lines.txt");
+    let empty = dir.join("empty.txt");
+    std::fs::write(&path, "one\ntwo\n").unwrap();
+    std::fs::write(&empty, "").unwrap();
+    let tool = read::ReadTool;
+    let text = tool
+        .execute("1", json!({"path": path, "offset": 2}))
+        .await
+        .unwrap()
+        .content[0]
+        .as_text()
+        .unwrap()
+        .to_string();
+    assert_eq!(text, "two\n");
+    let text = tool
+        .execute("2", json!({"path": empty}))
+        .await
+        .unwrap()
+        .content[0]
+        .as_text()
+        .unwrap()
+        .to_string();
+    assert_eq!(text, "");
+    let error = tool
+        .execute("3", json!({"path": empty, "offset": 2}))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "Offset 2 is beyond end of file (1 lines total)");
+}
+
+#[tokio::test]
 async fn edit_replaces_single_occurrence() {
     let dir = scratch_dir();
     let path = dir.join("a.txt");
