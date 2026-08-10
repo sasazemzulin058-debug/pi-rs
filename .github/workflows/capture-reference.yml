@@ -64,7 +64,9 @@ jobs:
         env:
           PI_UPSTREAM_ROOT: ${{ github.workspace }}/upstream-pi-mono
         run: |
+          mkdir -p captured-output
           python3 scripts/capture-upstream-fixtures \
+            --staging-dir captured-output \
             --milestone "${{ github.event.inputs.milestone }}" \
             --reference-version "0.83.0" \
             --reference-commit \
@@ -75,11 +77,12 @@ jobs:
       - name: Validate captured fixture manifest
         run: |
           python3 scripts/validate-fixture-manifest \
-            --milestone "${{ github.event.inputs.milestone }}"
+            --milestone "${{ github.event.inputs.milestone }}" \
+            --fixtures-dir captured-output
 
       - name: Archive captured fixtures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: captured-fixtures-${{ github.event.inputs.milestone }}
-          path: fixtures/upstream-pi/
+          path: captured-output/

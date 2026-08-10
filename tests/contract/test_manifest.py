@@ -1,6 +1,7 @@
 import unittest
 import sys
 import os
+import subprocess
 
 # Adjust path to import from scripts/
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'scripts'))
@@ -29,6 +30,19 @@ class TestFixtureManifest(unittest.TestCase):
         fixtures_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "fixtures", "upstream-pi")
         errors = validate_manifest(manifest, milestone="M1a", fixtures_dir=fixtures_dir)
         self.assertEqual(errors, [], f"M1a full corpus validation contains errors:\n" + "\n".join(errors))
+
+    def test_validate_fixture_manifest_cli(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        validator_script = os.path.join(root, "scripts", "validate-fixture-manifest")
+        # Test default invocation
+        res = subprocess.run(["python3", validator_script], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"Default validate-fixture-manifest failed: {res.stderr}")
+        self.assertIn("Manifest validation PASSED", res.stdout)
+
+        # Test milestone option
+        res_m1a = subprocess.run(["python3", validator_script, "--milestone", "M1a"], capture_output=True, text=True)
+        self.assertEqual(res_m1a.returncode, 0, f"M1a validate-fixture-manifest failed: {res_m1a.stderr}")
+        self.assertIn("Manifest validation PASSED", res_m1a.stdout)
 
     def test_m1a_cases_have_truthful_capture_state(self):
         manifest = load_manifest()

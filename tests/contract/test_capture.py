@@ -88,5 +88,39 @@ class TestCapture(unittest.TestCase):
             )
         self.assertIn("dirty", str(ctx.exception).lower())
 
+    def test_target_staging_with_output_directory(self):
+        out_dir = os.path.join(self.tmpdir, "staged_output")
+        env = dict(os.environ, PI_UPSTREAM_ROOT=self.fake_upstream)
+        # ponytail: stage target capture without publishing committed fixtures
+        argv = [
+            "--milestone", "M1a",
+            "--staging-dir", out_dir,
+            "--reference-version", "0.83.0",
+            "--reference-commit", self.head_commit,
+            "--reference-lockfile-sha256", self.lock_sha
+        ]
+
+        old_env = os.environ.get("PI_UPSTREAM_ROOT")
+        os.environ["PI_UPSTREAM_ROOT"] = self.fake_upstream
+        try:
+            adapters = dict(capture_upstream_fixtures.ADAPTERS)
+            adapters.update({cid: mock_adapter for cid in adapters})
+            capture_main(argv=argv, adapters=adapters)
+        except SystemExit as e:
+            self.assertEqual(e.code, 0)
+        finally:
+            if old_env is not None:
+                os.environ["PI_UPSTREAM_ROOT"] = old_env
+            else:
+                os.environ.pop("PI_UPSTREAM_ROOT", None)
+
+        self.assertTrue(os.path.exists(os.path.join(out_dir, "capture-report.json")))
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(capture_upstream_fixtures.MANIFEST_PATH), "manifest.json.bak")))
+        self.assertTrue(os.path.exists(os.path.join(out_dir, "manifest.json")))
+        with open(os.path.join(out_dir, "manifest.json"), "r") as f:
+            m = json.load(f)
+            self.assertEqual(m["reference"]["version"], "0.83.0")
+            self.assertEqual(m["reference"]["commit"], self.head_commit)
+
 if __name__ == "__main__":
     unittest.main()

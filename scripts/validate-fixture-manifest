@@ -7,10 +7,18 @@ def main():
     parser = argparse.ArgumentParser(description="Validate Pi compatibility fixture manifest")
     parser.add_argument("--milestone", help="Validate only this milestone, requiring all its cases to be captured")
     parser.add_argument("--fixtures-dir", help="Path to fixtures directory", default=None)
+    parser.add_argument("--manifest-path", help="Path to manifest.json", default=None)
     args = parser.parse_args()
 
     try:
-        manifest = load_manifest()
+        manifest_path = args.manifest_path
+        if manifest_path is None and args.fixtures_dir is not None:
+            import os
+            cand = os.path.join(args.fixtures_dir, "manifest.json")
+            if os.path.exists(cand):
+                manifest_path = cand
+
+        manifest = load_manifest(manifest_path) if manifest_path else load_manifest()
         fixtures_dir = args.fixtures_dir
         if fixtures_dir is None:
             # Default to fixtures/upstream-pi alongside manifest.json

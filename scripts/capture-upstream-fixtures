@@ -126,12 +126,16 @@ def main(argv=None, adapters=ADAPTERS):
     mode_group.add_argument("--verify-committed", action="store_true", default=True, help="Default read-only verification mode")
     mode_group.add_argument("--write", action="store_true", help="Explicit publication mode")
     parser.add_argument("--output", help="Directory for generated capture report artifact")
+    parser.add_argument("--staging-dir", help="Publish captured fixtures to isolated directory without committed-corpus comparison")
     parser.add_argument("--reference-version", help="Target reference package version")
     parser.add_argument("--reference-commit", help="Target reference commit SHA")
     parser.add_argument("--reference-lockfile-sha256", help="Target reference lockfile SHA-256")
 
     args = parser.parse_args(argv)
     is_write = args.write
+    is_staging = bool(args.staging_dir)
+    if is_staging and is_write:
+        parser.error("--staging-dir cannot be combined with --write")
 
     manifest = load_manifest()
     req_cases = manifest.get("requiredCaseIds", {})
@@ -247,12 +251,24 @@ def main(argv=None, adapters=ADAPTERS):
             "capturedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
 
-        if args.output:
-            os.makedirs(args.output, exist_ok=True)
-            report_path = os.path.join(args.output, "capture-report.json")
+        output_dir = args.staging_dir or args.output
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            report_path = os.path.join(output_dir, "capture-report.json")
             with open(report_path, "w", encoding="utf-8") as f:
                 json.dump(capture_report, f, indent=2)
                 f.write("\n")
+
+            # Also stage fixtures & manifest to output directory for staging mode
+            for fname in os.listdir(temp_stage_dir):
+                src = os.path.join(temp_stage_dir, fname)
+                dst = os.path.join(output_dir, fname)
+                if os.path.isfile(src):
+                    shutil.copy2(src, dst)
+
+        if is_staging:
+            print(f"Capture staging completed for milestone {args.milestone}: {output_dir}")
+            sys.exit(0)
 
         if not is_write:
             # --verify-committed mode: compare staged against committed fixtures
