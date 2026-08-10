@@ -46,7 +46,8 @@ mod tests {
         fs::write(root.join("CLAUDE.md"), "root claude").unwrap();
         fs::write(sub.join("AGENTS.md"), "child agents").unwrap();
 
-        let prompt = load_project_prompt(&sub);
+        let root_canon = crate::trust::CanonicalProjectRoot::new(&sub).unwrap();
+        let prompt = load_project_prompt(&root_canon);
 
         let child_agents_pos = prompt.find("child agents").unwrap();
         let root_agents_pos = prompt.find("root agents").unwrap();
@@ -190,14 +191,11 @@ async fn main() -> anyhow::Result<()> {
 
     let cwd = std::env::current_dir().ok();
     let explicitly_trusted = std::env::var("PI_TRUST_PROJECT").as_deref() == Ok("1");
-    let trust_decision = if explicitly_trusted {
-        crate::trust::TrustDecision::Trusted
-    } else {
-        crate::trust::evaluate_trust(cwd.as_deref(), false)
-    };
+    let trust_context =
+        crate::trust::resolve_trust(cwd.as_deref(), &app.config_dir, explicitly_trusted)?;
 
     match (cli.prompt, cli.resume) {
-        (Some(p), _) => print_mode::run_print(&app, p, permission, json, trust_decision).await,
+        (Some(p), _) => print_mode::run_print(&app, p, permission, json, trust_context).await,
         (None, resume_id) => {
             let initial = match resume_id {
                 Some(id) => match session::load(&app.config_dir, &id) {
@@ -209,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
                 },
                 None => None,
             };
-            interactive::run_interactive(&app, permission, initial, trust_decision).await
+            interactive::run_interactive(&app, permission, initial, trust_context).await
         }
     }
 }

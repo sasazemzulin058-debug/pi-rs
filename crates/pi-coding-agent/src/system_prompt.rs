@@ -18,16 +18,22 @@ You operate inside the user's working directory; relative paths resolve from the
 
 /// Build the full system prompt: base instructions concatenated with any
 /// project-local AGENTS.md / CLAUDE.md / .pi/instructions.md found while
-/// walking up from `cwd`, provided `trust_decision` is `TrustDecision::Trusted`.
+/// walking up from canonical project root, provided `trust_context` is `(TrustDecision::Trusted, Some(root))`.
 pub fn build_system_prompt(
     _config_dir: &Path,
-    trust_decision: crate::trust::TrustDecision,
+    trust_context: &(
+        crate::trust::TrustDecision,
+        Option<crate::trust::CanonicalProjectRoot>,
+    ),
 ) -> String {
-    if trust_decision != crate::trust::TrustDecision::Trusted {
+    let (decision, root) = trust_context;
+    if *decision != crate::trust::TrustDecision::Trusted {
         return BASE_SYSTEM_PROMPT.to_string();
     }
-    let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
-    let project = crate::project::load_project_prompt(&cwd);
+    let Some(ref canonical_root) = root else {
+        return BASE_SYSTEM_PROMPT.to_string();
+    };
+    let project = crate::project::load_project_prompt(canonical_root);
     if project.is_empty() {
         BASE_SYSTEM_PROMPT.to_string()
     } else {
@@ -38,7 +44,7 @@ pub fn build_system_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trust::TrustDecision;
+    use crate::trust::{CanonicalProjectRoot, TrustDecision};
     use std::fs;
     use std::path::PathBuf;
 
@@ -59,20 +65,19 @@ mod tests {
         let dir = temp_dir("trust-boundary");
         fs::write(dir.join("AGENTS.md"), "secret project instructions").unwrap();
 
+        let root = CanonicalProjectRoot::new(&dir).unwrap();
+
         // Default / non-trusted decisions must NOT load project instructions
-        let prompt_untrusted = build_system_prompt(&dir, TrustDecision::Untrusted);
+        let prompt_untrusted =
+            build_system_prompt(&dir, &(TrustDecision::Untrusted, Some(root.clone())));
         assert_eq!(prompt_untrusted, BASE_SYSTEM_PROMPT);
 
-        let prompt_unknown = build_system_prompt(&dir, TrustDecision::Unknown);
+        let prompt_unknown =
+            build_system_prompt(&dir, &(TrustDecision::Unknown, Some(root.clone())));
         assert_eq!(prompt_unknown, BASE_SYSTEM_PROMPT);
 
-        // When trusted, if run inside directory with AGENTS.md, it should include instructions
-        let orig_cwd = std::env::current_dir().unwrap();
-        if std::env::set_current_dir(&dir).is_ok() {
-            let prompt_trusted = build_system_prompt(&dir, TrustDecision::Trusted);
-            assert!(prompt_trusted.contains("secret project instructions"));
-            let _ = std::env::set_current_dir(orig_cwd);
-        }
+        let prompt_trusted = build_system_prompt(&dir, &(TrustDecision::Trusted, Some(root)));
+        assert!(prompt_trusted.contains("secret project instructions"));
 
         let _ = fs::remove_dir_all(&dir);
     }

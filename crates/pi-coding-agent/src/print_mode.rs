@@ -22,11 +22,14 @@ pub async fn run_print(
     prompt: String,
     permission: Arc<dyn PermissionPolicy>,
     json_mode: bool,
-    trust_decision: crate::trust::TrustDecision,
+    trust_context: (
+        crate::trust::TrustDecision,
+        Option<crate::trust::CanonicalProjectRoot>,
+    ),
 ) -> anyhow::Result<()> {
     let cfg = AgentConfig::new(
         app.model.clone(),
-        build_system_prompt(&app.config_dir, trust_decision),
+        build_system_prompt(&app.config_dir, &trust_context),
     )
     .with_tools(default_tools())
     .with_max_turns(app.max_turns)

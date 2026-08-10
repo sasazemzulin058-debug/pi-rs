@@ -18,7 +18,10 @@ pub async fn run_interactive(
     app: &AppConfig,
     permission: Arc<CliPermission>,
     initial: Option<Session>,
-    trust_decision: crate::trust::TrustDecision,
+    trust_context: (
+        crate::trust::TrustDecision,
+        Option<crate::trust::CanonicalProjectRoot>,
+    ),
 ) -> anyhow::Result<()> {
     eprintln!(
         "pi-rs — model: {} ({})  •  slash commands: /help",
@@ -36,7 +39,7 @@ pub async fn run_interactive(
 
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    let system_prompt = build_system_prompt(&app.config_dir, trust_decision);
+    let system_prompt = build_system_prompt(&app.config_dir, &trust_context);
 
     loop {
         write!(stdout, "\n> ")?;
