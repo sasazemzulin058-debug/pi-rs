@@ -6,6 +6,9 @@ mod interactive;
 mod permission;
 mod print_mode;
 mod project;
+// ponytail: U5 transport/types slice remains unexposed until RPC server wiring lands.
+#[allow(dead_code)]
+mod rpc;
 // ponytail: session import/JSONL APIs are library seams pending CLI wiring; remove once wired.
 #[allow(dead_code)]
 mod session;
