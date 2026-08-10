@@ -191,6 +191,31 @@ fn compaction_context_resolution_filters_summarized_entries() {
 }
 
 #[test]
+fn active_leaf_import_fail_closed_on_invalid_id() {
+    let dir = std::env::temp_dir().join(format!("pi-rs-u1-invalid-leaf-{}", std::process::id()));
+    let path = dir.join("invalid_leaf.jsonl");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        &path,
+        concat!(
+            r#"{"type":"session","id":"s1","active_leaf":"nonexistent-node"}"#, "\n",
+            r#"{"type":"message","id":"e0","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}"#, "\n",
+        ),
+    )
+    .unwrap();
+    assert!(session::import_pi_session_as_tree(&path).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn timestamp_parsing_safe_on_out_of_bounds_or_malformed() {
+    assert_eq!(session::parse_iso_timestamp("short"), None);
+    assert_eq!(session::parse_iso_timestamp("2026-08-10T12:00"), None);
+    assert_eq!(session::parse_iso_timestamp("XXXX-08-10T12:00:00Z"), None);
+    assert!(session::parse_iso_timestamp("2026-08-10T12:00:00Z").is_some());
+}
+
+#[test]
 fn cross_parser_interoperability_with_upstream_node_parser() {
     let dir = std::env::temp_dir().join(format!("pi-rs-u1-cross-{}", std::process::id()));
     let path = dir.join("pi_rs_v3_session.jsonl");

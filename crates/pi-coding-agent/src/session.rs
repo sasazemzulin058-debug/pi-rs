@@ -357,12 +357,12 @@ pub fn parse_iso_timestamp(s: &str) -> Option<i64> {
     if s.len() < 19 {
         return None;
     }
-    let year: i64 = s[0..4].parse().ok()?;
-    let month: i64 = s[5..7].parse().ok()?;
-    let day: i64 = s[8..10].parse().ok()?;
-    let hour: i64 = s[11..13].parse().ok()?;
-    let min: i64 = s[14..16].parse().ok()?;
-    let sec: i64 = s[17..19].parse().ok()?;
+    let year: i64 = s.get(0..4).and_then(|v| v.parse().ok())?;
+    let month: i64 = s.get(5..7).and_then(|v| v.parse().ok())?;
+    let day: i64 = s.get(8..10).and_then(|v| v.parse().ok())?;
+    let hour: i64 = s.get(11..13).and_then(|v| v.parse().ok())?;
+    let min: i64 = s.get(14..16).and_then(|v| v.parse().ok())?;
+    let sec: i64 = s.get(17..19).and_then(|v| v.parse().ok())?;
 
     let millis: i64 = if s.len() >= 23 && s.as_bytes()[19] == b'.' {
         s[20..23].parse().unwrap_or(0)
@@ -518,7 +518,8 @@ impl SessionTree {
             }
         }
         if let Some(leaf) = wire.active_leaf {
-            tree.set_active_leaf(&leaf)?;
+            tree.set_active_leaf(&leaf)
+                .with_context(|| format!("invalid active_leaf: {leaf}"))?;
         }
         Ok(tree)
     }
@@ -1536,7 +1537,8 @@ pub fn import_pi_session_as_tree(path: &Path) -> anyhow::Result<SessionTree> {
                 .or_else(|| value.get("activeLeaf"))
                 .and_then(|v| v.as_str())
             {
-                let _ = tree.set_active_leaf(leaf);
+                tree.set_active_leaf(leaf)
+                    .with_context(|| format!("invalid active leaf on line {}", line_no + 1))?;
             }
             continue;
         }
