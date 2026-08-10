@@ -126,8 +126,24 @@ jobs:
 
   ci-required:
     name: ci-required
-    needs: [test, supply-chain, m1a-manifest-gate, docs-check]
+    needs:
+      - test
+      - supply-chain
+      - m1a-manifest-gate
+      - docs-check
+      - termux-attestation
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate required status
         run: echo "All required CI jobs completed successfully."
+
+  termux-attestation:
+    name: authoritative Termux attestation
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/termux.yml
+    with:
+      source_sha: ${{ github.sha }}
+    permissions:
+      contents: read
