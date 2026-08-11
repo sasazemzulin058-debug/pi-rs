@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -42,6 +43,26 @@ pub enum PermissionDecision {
 #[async_trait]
 pub trait PermissionPolicy: Send + Sync {
     async fn check(&self, tool_name: &str, args: &Value) -> PermissionDecision;
+}
+
+/// Input delivered before permission checks and tool execution.
+#[derive(Debug, Clone)]
+pub struct BeforeToolCall {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub args: Value,
+}
+
+/// Result returned by a pre-tool hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BeforeToolCallResult {
+    Continue { args: Value },
+    Block { reason: Option<String> },
+}
+
+#[async_trait]
+pub trait ToolCallHook: Send + Sync {
+    async fn before_tool_call(&self, call: BeforeToolCall) -> Result<BeforeToolCallResult, String>;
 }
 
 /// Always-allow policy — useful for tests and non-interactive runs.
@@ -102,6 +123,7 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub permission: Arc<dyn PermissionPolicy>,
     pub provider_factory: Arc<dyn ProviderFactory>,
+    pub tool_call_hook: Option<Arc<dyn ToolCallHook>>,
 }
 
 impl AgentConfig {
@@ -115,6 +137,7 @@ impl AgentConfig {
             system_prompt: system_prompt.into(),
             permission: Arc::new(AllowAllPolicy),
             provider_factory: Arc::new(DefaultProviderFactory),
+            tool_call_hook: None,
         }
     }
 
@@ -142,11 +165,108 @@ impl AgentConfig {
         self.provider_factory = factory;
         self
     }
+
+    pub fn with_tool_call_hook(mut self, hook: Arc<dyn ToolCallHook>) -> Self {
+        self.tool_call_hook = Some(hook);
+        self
+    }
 }
 
 /// Events emitted by the agent loop, mirroring `AgentEvent` in TS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueMode {
+    All,
+    OneAtATime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionPhase {
+    Idle,
+    Executing,
+    Steering,
+    Compacting,
+    Settled,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentSessionState {
+    pub phase: SessionPhase,
+    pub messages: Vec<Message>,
+    pub input_queue: VecDeque<Message>,
+    pub steering_queue: VecDeque<Message>,
+    pub steering_mode: QueueMode,
+    pub followup_mode: QueueMode,
+    pub cancelled: bool,
+    pub settled: bool,
+}
+
+impl AgentSessionState {
+    pub fn new(messages: Vec<Message>) -> Self {
+        Self {
+            phase: SessionPhase::Idle,
+            messages,
+            input_queue: VecDeque::new(),
+            steering_queue: VecDeque::new(),
+            steering_mode: QueueMode::OneAtATime,
+            followup_mode: QueueMode::OneAtATime,
+            cancelled: false,
+            settled: false,
+        }
+    }
+
+    pub fn queue_followup(&mut self, message: Message) -> crate::error::Result<()> {
+        self.input_queue.push_back(message);
+        Ok(())
+    }
+
+    pub fn queue_steering(&mut self, message: Message) -> crate::error::Result<()> {
+        self.steering_queue.push_back(message);
+        Ok(())
+    }
+
+    pub fn cancel(&mut self) {
+        self.cancelled = true;
+    }
+
+    pub fn take_steering(&mut self) -> Vec<Message> {
+        if self.steering_queue.is_empty() {
+            return Vec::new();
+        }
+        match self.steering_mode {
+            QueueMode::All => self.steering_queue.drain(..).collect(),
+            QueueMode::OneAtATime => self.steering_queue.pop_front().into_iter().collect(),
+        }
+    }
+
+    pub fn take_followups(&mut self) -> Vec<Message> {
+        if self.input_queue.is_empty() {
+            return Vec::new();
+        }
+        match self.followup_mode {
+            QueueMode::All => self.input_queue.drain(..).collect(),
+            QueueMode::OneAtATime => self.input_queue.pop_front().into_iter().collect(),
+        }
+    }
+
+    pub fn take_inputs(&mut self) -> Vec<Message> {
+        if !self.steering_queue.is_empty() {
+            self.take_steering()
+        } else {
+            self.take_followups()
+        }
+    }
+}
+
+/// Queue/state seam for U2. Runtime execution remains owned by `agent_loop`.
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
+    PhaseChange {
+        phase: SessionPhase,
+    },
+    Settlement {
+        messages: Vec<Message>,
+        cancelled: bool,
+    },
     AgentStart,
     AgentEnd {
         messages: Vec<Message>,

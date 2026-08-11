@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIST_DIR="${1:-dist}"
+TARGET="${2:-workspace}"
+mkdir -p "$DIST_DIR"
+python3 - "$ROOT_DIR" "$DIST_DIR/release-sbom-$TARGET.spdx.json" "$TARGET" <<'PY'
+import hashlib, json, subprocess, sys
+from pathlib import Path
+root, output, target = map(Path, sys.argv[1:])
+data = json.loads(subprocess.run(["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", str(target)], cwd=root, check=True, capture_output=True, text=True).stdout)
+packages = sorted(data["packages"], key=lambda p: p["id"])
+def spdx_id(package): return "SPDXRef-" + hashlib.sha256(package["id"].encode()).hexdigest()[:24]
+ids = {p["id"]: spdx_id(p) for p in packages}
+root_pkg = next((p for p in packages if p["name"] == "pi-coding-agent"), packages[0])
+items = []
+for p in packages:
+    items.append({"SPDXID": ids[p["id"]], "name": p["name"], "versionInfo": p["version"], "downloadLocation": p.get("source") or "NOASSERTION", "licenseConcluded": p.get("license") or "NOASSERTION", "licenseDeclared": p.get("license") or "NOASSERTION", "copyrightText": "NOASSERTION"})
+relationships = [{"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": ids[root_pkg["id"]]}]
+for node in data.get("resolve", {}).get("nodes", []):
+    for dep in node.get("deps", []):
+        pkg_id = dep.get("pkg")
+        if pkg_id in ids:
+            relationships.append({"spdxElementId": ids[node["id"]], "relationshipType": "DEPENDS_ON", "relatedSpdxElement": ids[pkg_id]})
+sbom = {"spdxVersion":"SPDX-2.3", "dataLicense":"CC0-1.0", "SPDXID":"SPDXRef-DOCUMENT", "name":f"pi-rs-release-{target}", "documentNamespace":f"https://spdx.org/spdxdocs/pi-rs-{target}-{hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()}", "creationInfo":{"created":"1970-01-01T00:00:00Z","creators":["Tool: pi-rs-generate-release-sbom"]}, "packages":items, "relationships":relationships}
+output.write_text(json.dumps(sbom, indent=2, sort_keys=True) + "\n")
+PY

@@ -1,0 +1,6 @@
+{
+  "command": "sleep 10",
+  "signal": "SIGTERM",
+  "cancelled": true,
+  "descendants_reaped": true
+}

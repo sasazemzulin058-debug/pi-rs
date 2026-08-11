@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import hashlib
 
 MANIFEST_PATH = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
@@ -18,6 +19,25 @@ def load_manifest(manifest_path=MANIFEST_PATH):
     with open(manifest_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+def canonical_json_sha256(value):
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+def validate_expected_envelope(value, case_id, oracle):
+    if not isinstance(value, dict) or set(value) != {"case_id", "oracle", "expected"}:
+        return "expected envelope must contain exactly case_id, oracle and expected"
+    if value["case_id"] != case_id or value["oracle"] != oracle:
+        return "expected envelope metadata mismatch"
+    if not isinstance(value["expected"], dict):
+        return "expected envelope payload must be an object"
+    return None
+
 def is_placeholder_sha(sha):
     # A SHA is a placeholder if all characters are identical (like 00000... or 11111...)
     # or if it starts with typical mock values like "123456"
@@ -27,15 +47,68 @@ def is_placeholder_sha(sha):
         return True
     return False
 
-def validate_manifest(manifest, milestone=None):
+def load_expected_and_sidecar(fixtures_dir, case_id):
+    exp_path = os.path.join(fixtures_dir, f"{case_id}.expected.json")
+    hash_path = os.path.join(fixtures_dir, f"{case_id}.raw-hash.txt")
+    if not os.path.exists(exp_path):
+        raise FileNotFoundError(f"Missing expected fixture file for case '{case_id}': {exp_path}")
+    if not os.path.exists(hash_path):
+        raise FileNotFoundError(f"Missing sidecar hash file for case '{case_id}': {hash_path}")
+    with open(exp_path, "r", encoding="utf-8") as f:
+        expected_json = json.load(f)
+    with open(hash_path, "r", encoding="utf-8") as f:
+        sidecar_hash = f.read().strip()
+    return expected_json, sidecar_hash
+
+def resolve_oracle_identity(manifest, case_info):
+    oracle = case_info.get("oracle")
+    if oracle == "upstream-pi":
+        ref_commit = manifest.get("reference", {}).get("commit", "")
+        if not ref_commit:
+            raise ValueError("Missing reference.commit for upstream-pi oracle")
+        return ref_commit
+    elif oracle == "pi-rs-invariant":
+        spec_ver = case_info.get("invariantSpecVersion")
+        if not spec_ver or not isinstance(spec_ver, str):
+            raise ValueError("Missing or invalid invariantSpecVersion for pi-rs-invariant oracle")
+        return spec_ver
+    else:
+        raise ValueError(f"Unknown oracle: {oracle}")
+
+def compute_corpus_digest(manifest, fixtures_dir, milestone="M1a"):
+    cases_catalog = manifest.get("cases", {})
+    req_cases = manifest.get("requiredCaseIds", {}).get(milestone, [])
+    lines = []
+    for case_id in sorted(req_cases):
+        case_info = cases_catalog.get(case_id)
+        if not case_info:
+            raise ValueError(f"Case '{case_id}' missing from catalog")
+        oracle = case_info.get("oracle")
+        oracle_identity = resolve_oracle_identity(manifest, case_info)
+        _, expected_sha256 = load_expected_and_sidecar(fixtures_dir, case_id)
+        line = f"{case_id}\x00{oracle}\x00{oracle_identity}\x00{expected_sha256}\n"
+        lines.append(line.encode("utf-8"))
+
+    hasher = hashlib.sha256()
+    for line in lines:
+        hasher.update(line)
+    return f"sha256:{hasher.hexdigest()}"
+
+def validate_manifest(manifest, milestone=None, fixtures_dir=None, canonical_m1a_ids=None):
     errors = []
-    
+
+    # Allowlist normalization: ensure keys are in expected insertion order and no unexpected keys
+    allowed_top_keys = {"schemaVersion", "reference", "corpusDigest", "requiredCaseIds", "cases"}
+    extra_top_keys = set(manifest.keys()) - allowed_top_keys
+    if extra_top_keys:
+        errors.append(f"Unexpected top-level keys in manifest: {sorted(extra_top_keys)}")
+
     # 1. Check schemaVersion
     if "schemaVersion" not in manifest:
         errors.append("Missing schemaVersion")
-    elif manifest["schemaVersion"] != 1:
+    elif manifest["schemaVersion"] != 2:
         errors.append(f"Invalid schemaVersion: {manifest['schemaVersion']}")
-        
+
     # 2. Check reference metadata
     ref = manifest.get("reference", {})
     if not ref:
@@ -44,46 +117,35 @@ def validate_manifest(manifest, milestone=None):
         for key in ["package", "version", "commit", "lockfileSha256"]:
             if not ref.get(key):
                 errors.append(f"Missing reference field: {key}")
-        
+
         commit = ref.get("commit", "")
         if commit:
             if not SHA1_RE.match(commit):
                 errors.append(f"Malformed reference commit SHA: {commit}")
             elif is_placeholder_sha(commit):
                 errors.append(f"Placeholder reference commit SHA rejected: {commit}")
-                
+
         lockfile = ref.get("lockfileSha256", "")
         if lockfile:
             if not SHA256_RE.match(lockfile):
                 errors.append(f"Malformed reference lockfileSha256: {lockfile}")
             elif is_placeholder_sha(lockfile):
                 errors.append(f"Placeholder reference lockfileSha256 rejected: {lockfile}")
-                
-    # 3. Check captureEnvironment
-    cap_env = manifest.get("captureEnvironment", {})
-    if not cap_env:
-        errors.append("Missing captureEnvironment section")
-    else:
-        status = cap_env.get("captureStatus")
-        if status not in ["pending", "completed"]:
-            errors.append(f"captureEnvironment.captureStatus must be 'pending' or 'completed', got: {status}")
 
-        digest = cap_env.get("digest")
-        if status == "pending" and digest not in [None, "", "pending"]:
-            errors.append(f"captureEnvironment digest must be null or empty during pending capture, got: {digest}")
-        if status == "completed":
-            if not isinstance(digest, str) or not re.match(r"^sha256:[0-9a-f]{64}$", digest):
-                errors.append("captureEnvironment digest is required when captureStatus is completed")
-            for key in ["host", "nodeVersion", "bunVersion", "capturedAt"]:
-                if not cap_env.get(key):
-                    errors.append(f"captureEnvironment.{key} is required when captureStatus is completed")
-            
+    # 3. Check corpusDigest
+    corpus_digest = manifest.get("corpusDigest", {})
+    if not corpus_digest or not isinstance(corpus_digest, dict):
+        errors.append("Missing or invalid corpusDigest section")
+    else:
+        for m_key, digest_val in corpus_digest.items():
+            if not isinstance(digest_val, str) or not re.match(r"^sha256:[0-9a-f]{64}$", digest_val):
+                errors.append(f"corpusDigest.{m_key} must be in format 'sha256:<64 lowercase hex>'")
+
     # 4. Check requiredCaseIds
     req_cases = manifest.get("requiredCaseIds", {})
     if not req_cases:
         errors.append("Missing requiredCaseIds section")
     else:
-        # Require all milestone keys to be present in requiredCaseIds
         all_milestones = ["M0", "M1a", "M1", "M2", "M3"]
         for m in all_milestones:
             if m not in req_cases:
@@ -91,23 +153,23 @@ def validate_manifest(manifest, milestone=None):
         for m in req_cases.keys():
             if m not in all_milestones:
                 errors.append(f"Invalid milestone key in requiredCaseIds: {m}")
-                
-        # Validate exact equality of M1a case IDs against the canonical set
-        m1a_cases = req_cases.get("M1a", [])
-        if isinstance(m1a_cases, list) and manifest.get("reference", {}).get("version") == "0.82.1" and manifest.get("reference", {}).get("package") == "@earendil-works/pi-coding-agent":
-            # Only validate against canonical JSON if it's the real manifest we want to check, not mock ones in TestValidator
-            canonical_path = os.path.join(os.path.dirname(MANIFEST_PATH), "required-m1a-case-ids.json")
-            if os.path.exists(canonical_path):
-                try:
-                    with open(canonical_path, "r", encoding="utf-8") as cf:
-                        canonical_ids = json.load(cf)
-                    # Skip check if the mock manifest doesn't have the full canonical IDs
-                    if len(m1a_cases) > 5:
-                        if set(m1a_cases) != set(canonical_ids) or len(m1a_cases) != len(canonical_ids):
-                            errors.append("requiredCaseIds.M1a does not match the canonical set in required-m1a-case-ids.json")
-                except Exception as ce:
-                    errors.append(f"Failed to load required-m1a-case-ids.json: {ce}")
 
+        # Validate M1a case IDs against canonical set (version independent)
+        m1a_cases = req_cases.get("M1a", [])
+        if isinstance(m1a_cases, list):
+            if canonical_m1a_ids is not None:
+                expected_ids = canonical_m1a_ids
+            else:
+                canonical_path = os.path.join(os.path.dirname(MANIFEST_PATH), "required-m1a-case-ids.json")
+                if os.path.exists(canonical_path):
+                    with open(canonical_path, "r", encoding="utf-8") as cf:
+                        expected_ids = json.load(cf)
+                else:
+                    expected_ids = None
+
+            if expected_ids is not None:
+                if set(m1a_cases) != set(expected_ids) or len(m1a_cases) != len(expected_ids):
+                    errors.append("requiredCaseIds.M1a does not match the canonical set in required-m1a-case-ids.json")
         all_required_case_ids = []
         for m, case_list in req_cases.items():
             if not isinstance(case_list, list):
@@ -116,21 +178,19 @@ def validate_manifest(manifest, milestone=None):
             for cid in case_list:
                 if cid in all_required_case_ids:
                     errors.append(f"Duplicate required case ID: {cid}")
-                all_required_case_ids.add(cid) if hasattr(all_required_case_ids, 'add') else all_required_case_ids.append(cid)
-                
+                all_required_case_ids.append(cid)
+
     # 5. Check cases catalog
     cases_catalog = manifest.get("cases", {})
     if not cases_catalog:
         errors.append("Missing cases section")
     else:
-        # Check that every case in requiredCaseIds is defined in cases
         if req_cases:
             for m, case_list in req_cases.items():
                 for cid in case_list:
                     if cid not in cases_catalog:
                         errors.append(f"Case '{cid}' required by milestone {m} is missing from cases catalog")
-                        
-        # Check that every case in cases is in requiredCaseIds
+
         for cid in cases_catalog.keys():
             found = False
             if req_cases:
@@ -140,8 +200,7 @@ def validate_manifest(manifest, milestone=None):
                         break
             if not found:
                 errors.append(f"Case '{cid}' in catalog is not associated with any milestone in requiredCaseIds")
-                
-        # Validate each case record
+
         for cid, case_info in cases_catalog.items():
             if not isinstance(case_info, dict):
                 errors.append(f"Case {cid} record must be a JSON object")
@@ -150,16 +209,31 @@ def validate_manifest(manifest, milestone=None):
                 errors.append(f"Case {cid} missing 'captured' status")
             elif not isinstance(case_info["captured"], bool):
                 errors.append(f"Case {cid} 'captured' status must be a boolean")
-                
+
             oracle = case_info.get("oracle")
             if oracle not in ["upstream-pi", "pi-rs-invariant"]:
                 errors.append(f"Case {cid} has invalid oracle: {oracle} (must be 'upstream-pi' or 'pi-rs-invariant')")
-                
+
+            if oracle == "pi-rs-invariant":
+                inv_ver = case_info.get("invariantSpecVersion")
+                if not inv_ver or not isinstance(inv_ver, str):
+                    errors.append(f"Case {cid} with pi-rs-invariant oracle missing non-empty invariantSpecVersion")
+
             desc = case_info.get("description")
             if not desc:
                 errors.append(f"Case {cid} missing description")
 
-    # 6. Check uncaptured cases for specified milestone
+            norm_allow = case_info.get("normalizationAllowlist")
+            if norm_allow is None:
+                errors.append(f"Case {cid} missing normalizationAllowlist")
+            elif not isinstance(norm_allow, list):
+                errors.append(f"Case {cid} normalizationAllowlist must be a list")
+            else:
+                for ptr in norm_allow:
+                    if not isinstance(ptr, str) or (ptr != "" and not ptr.startswith("/")):
+                        errors.append(f"Case {cid} normalizationAllowlist item must be a JSON pointer starting with '/', got: {ptr}")
+
+    # 6. Check milestone cases captured status & corpus integrity if fixtures_dir provided
     if milestone and milestone != "M0":
         if req_cases and cases_catalog:
             if milestone not in req_cases:
@@ -167,37 +241,110 @@ def validate_manifest(manifest, milestone=None):
             else:
                 for cid in req_cases[milestone]:
                     case_info = cases_catalog.get(cid, {})
-                    if not case_info.get("captured", False):
+                    if case_info.get("oracle") == "upstream-pi" and not case_info.get("captured", False):
                         errors.append(f"Case '{cid}' required for milestone {milestone} is not captured (pending)")
-                        
+
+    # 7. Corpus directory integrity checks if fixtures_dir provided
+    if fixtures_dir and os.path.exists(fixtures_dir):
+        # Validate corpus for all milestones defined in corpusDigest or requested milestone
+        milestones_to_check = [milestone] if milestone else list(corpus_digest.keys()) if isinstance(corpus_digest, dict) else []
+        for m in milestones_to_check:
+            if m not in req_cases:
+                continue
+            m_cases = req_cases[m]
+            if not m_cases:
+                continue
+
+            expected_digest = corpus_digest.get(m) if isinstance(corpus_digest, dict) else None
+            if not expected_digest:
+                errors.append(f"Milestone {m} has artifacts but missing corpusDigest entry")
+                continue
+
+            for cid in m_cases:
+                case_info = cases_catalog.get(cid, {})
+                exp_path = os.path.join(fixtures_dir, f"{cid}.expected.json")
+                hash_path = os.path.join(fixtures_dir, f"{cid}.raw-hash.txt")
+
+                if not os.path.exists(exp_path):
+                    errors.append(f"Missing expected fixture file for case '{cid}': {exp_path}")
+                if not os.path.exists(hash_path):
+                    errors.append(f"Missing sidecar hash file for case '{cid}': {hash_path}")
+
+                if os.path.exists(exp_path) and os.path.exists(hash_path):
+                    try:
+                        with open(exp_path, "r", encoding="utf-8") as f:
+                            val = json.load(f)
+                        with open(hash_path, "r", encoding="utf-8") as f:
+                            sc_hash = f.read().strip()
+
+                        # Invariant case envelope check
+                        if case_info.get("oracle") == "pi-rs-invariant":
+                            env_err = validate_expected_envelope(val, cid, case_info.get("oracle"))
+                            if env_err:
+                                errors.append(f"Case '{cid}' {env_err}")
+
+                        # Content hash verification
+                        calc_hash = canonical_json_sha256(val)
+                        if sc_hash != calc_hash:
+                            errors.append(f"Sidecar hash mismatch for case '{cid}': committed {sc_hash} != calculated {calc_hash}")
+                    except Exception as ex:
+                        errors.append(f"Failed checking fixture artifacts for case '{cid}': {ex}")
+
+            # Verify corpus digest
+            try:
+                calc_digest = compute_corpus_digest(manifest, fixtures_dir, milestone=m)
+                if expected_digest != calc_digest:
+                    errors.append(f"Corpus digest mismatch for milestone {m}: manifest {expected_digest} != computed {calc_digest}")
+            except Exception as ex:
+                errors.append(f"Failed computing corpus digest for milestone {m}: {ex}")
+
+        # Check for orphan files in fixtures_dir
+        all_cases = set(cases_catalog.keys()) if cases_catalog else set()
+        for fname in os.listdir(fixtures_dir):
+            if fname.endswith(".actual.json"):
+                continue  # ignore .actual.json
+            if fname.endswith(".expected.json"):
+                cid = fname[:-14]
+                if cid not in all_cases:
+                    errors.append(f"Orphan expected file found: {fname}")
+            elif fname.endswith(".raw-hash.txt"):
+                cid = fname[:-13]
+                if cid not in all_cases:
+                    errors.append(f"Orphan sidecar hash file found: {fname}")
+
     return errors
 
-def normalize_structure(obj, path=""):
+def normalize_structure(obj, allowlist=None, path=""):
     if isinstance(obj, dict):
         res = {}
         for k, v in obj.items():
-            if k in ["created_at", "timestamp", "created", "updated_at"]:
-                if isinstance(v, str) and ISO_DATE_RE.match(v):
-                    res[k] = "1970-01-01T00:00:00.000Z"
+            k_escaped = k.replace("~", "~0").replace("/", "~1")
+            sub_path = f"{path}/{k_escaped}"
+            if allowlist is None or sub_path in allowlist:
+                if k in ["created_at", "timestamp", "created", "updated_at"]:
+                    if isinstance(v, str) and ISO_DATE_RE.match(v):
+                        res[k] = "1970-01-01T00:00:00.000Z"
+                    else:
+                        res[k] = v
+                elif k in ["session_id", "uuid", "request_id"]:
+                    if isinstance(v, str) and UUID_RE.match(v):
+                        res[k] = "00000000-0000-0000-0000-000000000000"
+                    else:
+                        res[k] = v
+                elif k in ["temp_path", "temp_dir", "path"]:
+                    if isinstance(v, str):
+                        v_norm = re.sub(r'/data/data/com\.termux/files/usr/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v)
+                        v_norm = re.sub(r'/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v_norm)
+                        res[k] = v_norm
+                    else:
+                        res[k] = v
                 else:
-                    res[k] = v
-            elif k in ["session_id", "uuid", "request_id"]:
-                if isinstance(v, str) and UUID_RE.match(v):
-                    res[k] = "00000000-0000-0000-0000-000000000000"
-                else:
-                    res[k] = v
-            elif k in ["temp_path", "temp_dir", "path"]:
-                if isinstance(v, str):
-                    v_norm = re.sub(r'/data/data/com\.termux/files/usr/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v)
-                    v_norm = re.sub(r'/tmp/[a-zA-Z0-9_\-\.]+', '__TMPDIR__', v_norm)
-                    res[k] = v_norm
-                else:
-                    res[k] = v
+                    res[k] = normalize_structure(v, allowlist, sub_path)
             else:
-                res[k] = normalize_structure(v, f"{path}/{k}")
+                res[k] = normalize_structure(v, allowlist, sub_path)
         return res
     elif isinstance(obj, list):
-        return [normalize_structure(item, f"{path}/{idx}") for idx, item in enumerate(obj)]
+        return [normalize_structure(item, allowlist, f"{path}/{idx}") for idx, item in enumerate(obj)]
     return obj
 
 def get_json_pointer_diffs(expected, actual, path=""):
@@ -205,7 +352,7 @@ def get_json_pointer_diffs(expected, actual, path=""):
     if type(expected) != type(actual):
         diffs.append((path, f"type mismatch: expected {type(expected).__name__}, got {type(actual).__name__}"))
         return diffs
-    
+
     if isinstance(expected, dict):
         for k in set(expected.keys()) | set(actual.keys()):
             k_escaped = k.replace("~", "~0").replace("/", "~1")
@@ -226,13 +373,13 @@ def get_json_pointer_diffs(expected, actual, path=""):
             diffs.append((path, f"value mismatch: expected {expected}, got {actual}"))
     return diffs
 
-def compare_structures(expected, actual):
-    norm_expected = normalize_structure(expected)
-    norm_actual = normalize_structure(actual)
+def compare_structures(expected, actual, allowlist=None):
+    norm_expected = normalize_structure(expected, allowlist=allowlist)
+    norm_actual = normalize_structure(actual, allowlist=allowlist)
     diffs = get_json_pointer_diffs(norm_expected, norm_actual)
     if not diffs:
         return None
-    
+
     # Format diffs nicely
     lines = []
     for path, msg in diffs:

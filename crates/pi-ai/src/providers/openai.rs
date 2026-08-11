@@ -114,11 +114,12 @@ fn convert_messages(system_prompt: Option<&str>, messages: &[Message]) -> Vec<Va
                 let mut tool_calls: Vec<Value> = Vec::new();
                 for c in &a.content {
                     match c {
-                        Content::Text { text: t } => text.push_str(t),
+                        Content::Text { text: t, .. } => text.push_str(t),
                         Content::ToolCall {
                             id,
                             name,
                             arguments,
+                            ..
                         } => {
                             tool_calls.push(json!({
                                 "id": id,
@@ -290,6 +291,7 @@ impl Provider for OpenAiProvider {
             let mut stop = StopReason::Stop;
             let mut usage = Usage::default();
             let mut response_model: Option<String> = None;
+            let mut saw_done = false;
 
             while let Some(ev) = sse.next().await {
                 if let Some(c) = &cancel_for_stream {
@@ -306,6 +308,7 @@ impl Provider for OpenAiProvider {
                     }
                 };
                 if ev.data == "[DONE]" {
+                    saw_done = true;
                     break;
                 }
                 if ev.data.is_empty() {
@@ -313,7 +316,10 @@ impl Provider for OpenAiProvider {
                 }
                 let chunk: Chunk = match serde_json::from_str(&ev.data) {
                     Ok(c) => c,
-                    Err(_) => continue,
+                    Err(e) => {
+                        yield Err(Error::InvalidResponse(format!("malformed sse data: {e}")));
+                        return;
+                    }
                 };
                 if let Some(m) = chunk.model { response_model = Some(m); }
                 if let Some(u) = chunk.usage {
@@ -376,6 +382,13 @@ impl Provider for OpenAiProvider {
                 }
             }
 
+            if !saw_done {
+                yield Err(Error::InvalidResponse(
+                    "OpenAI SSE stream ended before [DONE]".into(),
+                ));
+                return;
+            }
+
             if text_started {
                 yield Ok(AssistantMessageEvent::TextEnd {
                     content_index: text_index,
@@ -386,13 +399,34 @@ impl Provider for OpenAiProvider {
 
             let mut out_content: Vec<Content> = Vec::new();
             if text_started {
-                out_content.push(Content::Text { text: text_buf.clone() });
+                out_content.push(Content::Text {
+                    text: text_buf.clone(),
+                    text_signature: None,
+                });
             }
             for (i, tc) in tool_calls {
-                let args: Value = if tc.args.is_empty() {
-                    Value::Object(Default::default())
-                } else {
-                    serde_json::from_str(&tc.args).unwrap_or(Value::Object(Default::default()))
+                if tc.id.trim().is_empty() || tc.name.trim().is_empty() {
+                    yield Err(Error::InvalidResponse(
+                        "OpenAI tool call is missing an id or function name".into(),
+                    ));
+                    return;
+                }
+                if tc.args.trim().is_empty() {
+                    yield Err(Error::InvalidResponse(format!(
+                        "empty tool call arguments for {}",
+                        tc.name
+                    )));
+                    return;
+                }
+                let args: Value = match serde_json::from_str(&tc.args) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        yield Err(Error::InvalidResponse(format!(
+                            "malformed tool call arguments for {}: {e}",
+                            tc.name
+                        )));
+                        return;
+                    }
                 };
                 let block_index = text_index + i;
                 yield Ok(AssistantMessageEvent::ToolCallEnd {
@@ -405,6 +439,7 @@ impl Provider for OpenAiProvider {
                     id: tc.id,
                     name: tc.name,
                     arguments: args,
+                    thought_signature: None,
                 });
             }
 
@@ -413,7 +448,11 @@ impl Provider for OpenAiProvider {
                 content: out_content,
                 api,
                 provider,
-                model: response_model.unwrap_or(model_id),
+                model: response_model.clone().unwrap_or(model_id),
+                response_model,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage,
                 stop_reason: stop,
                 error_message: None,

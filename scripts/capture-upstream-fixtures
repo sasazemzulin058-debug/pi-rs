@@ -5,12 +5,20 @@ import argparse
 import subprocess
 import json
 import datetime
-
-# Adjust path to import from scripts/
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tempfile
+import shutil
 import hashlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from capture_adapters.m1a_adapters import ADAPTERS
-from contract_fixture_lib import load_manifest, MANIFEST_PATH
+from contract_fixture_lib import (
+    canonical_json_sha256,
+    compute_corpus_digest,
+    load_expected_and_sidecar,
+    load_manifest,
+    validate_manifest,
+    MANIFEST_PATH,
+)
 
 def get_tool_version(args):
     try:
@@ -19,105 +27,335 @@ def get_tool_version(args):
     except Exception:
         return None
 
-def main():
+def calculate_file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+def validate_preflight(
+    upstream_root,
+    req_commit,
+    req_version,
+    req_lockfile_sha,
+    milestone_cases,
+    cases_catalog,
+    adapters=ADAPTERS
+):
+    if not upstream_root or not os.path.isdir(upstream_root):
+        raise ValueError(f"PI_UPSTREAM_ROOT directory does not exist or is invalid: {upstream_root}")
+
+    # Check git rev-parse HEAD
+    try:
+        git_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout.strip()
+    except Exception as e:
+        raise ValueError(f"Failed running git rev-parse HEAD in upstream root: {e}")
+
+    if req_commit and git_head != req_commit:
+        raise ValueError(f"Target commit mismatch: requested {req_commit}, git HEAD is {git_head}")
+
+    # Check tracked tree is clean
+    try:
+        git_status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=upstream_root,
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout.strip()
+    except Exception as e:
+        raise ValueError(f"Failed running git status in upstream root: {e}")
+
+    if git_status:
+        raise ValueError("Upstream tracked git tree is dirty")
+
+    # Check package.json versions
+    coding_agent_pkg = os.path.join(upstream_root, "packages", "coding-agent", "package.json")
+    ai_pkg = os.path.join(upstream_root, "packages", "ai", "package.json")
+
+    for pkg_path in [coding_agent_pkg, ai_pkg]:
+        if not os.path.exists(pkg_path):
+            raise ValueError(f"Missing package.json file: {pkg_path}")
+        with open(pkg_path, "r", encoding="utf-8") as f:
+            pkg_data = json.load(f)
+        ver = pkg_data.get("version")
+        if req_version and ver != req_version:
+            raise ValueError(f"Package version mismatch in {pkg_path}: requested {req_version}, got {ver}")
+
+    # Check package-lock.json SHA-256
+    lock_path = os.path.join(upstream_root, "package-lock.json")
+    if not os.path.exists(lock_path):
+        raise ValueError(f"Missing package-lock.json at {lock_path}")
+    lock_sha = calculate_file_sha256(lock_path)
+    if req_lockfile_sha and lock_sha != req_lockfile_sha:
+        raise ValueError(f"package-lock.json SHA-256 mismatch: requested {req_lockfile_sha}, got {lock_sha}")
+
+    # Check Node version callable
+    node_ver = get_tool_version(["node", "--version"])
+    if not node_ver:
+        raise ValueError("node executable not found or failed execution")
+
+    # Check cases adapters
+    for cid in milestone_cases:
+        info = cases_catalog.get(cid, {})
+        oracle = info.get("oracle")
+        if oracle == "upstream-pi":
+            if cid not in adapters:
+                raise ValueError(f"Missing capture adapter for upstream-pi case '{cid}'")
+        elif oracle == "pi-rs-invariant":
+            pass
+
+    return {
+        "git_head": git_head,
+        "lockfile_sha256": lock_sha,
+        "node_version": node_ver,
+        "bun_version": get_tool_version(["bun", "--version"]) or "unknown"
+    }
+
+def main(argv=None, adapters=ADAPTERS):
     parser = argparse.ArgumentParser(description="Capture reference fixtures from upstream Pi")
     parser.add_argument("--milestone", required=True, help="Milestone to capture (e.g. M1a)")
-    args = parser.parse_args()
-    
-    print(f"Capturing fixtures for milestone: {args.milestone}")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("--verify-committed", action="store_true", default=True, help="Default read-only verification mode")
+    mode_group.add_argument("--write", action="store_true", help="Explicit publication mode")
+    parser.add_argument("--output", help="Directory for generated capture report artifact")
+    parser.add_argument("--staging-dir", help="Publish captured fixtures to isolated directory without committed-corpus comparison")
+    parser.add_argument("--reference-version", help="Target reference package version")
+    parser.add_argument("--reference-commit", help="Target reference commit SHA")
+    parser.add_argument("--reference-lockfile-sha256", help="Target reference lockfile SHA-256")
 
-    try:
-        manifest = load_manifest()
-    except Exception as e:
-        print(f"Failed to load manifest: {e}")
-        sys.exit(1)
+    args = parser.parse_args(argv)
+    is_write = args.write
+    is_staging = bool(args.staging_dir)
+    if is_staging and is_write:
+        parser.error("--staging-dir cannot be combined with --write")
+    if is_staging:
+        if os.path.exists(args.staging_dir):
+            if not os.path.isdir(args.staging_dir):
+                parser.error("--staging-dir must be a directory")
+            if os.listdir(args.staging_dir):
+                parser.error("--staging-dir must be empty")
+        else:
+            os.makedirs(args.staging_dir)
 
+    manifest = load_manifest()
     req_cases = manifest.get("requiredCaseIds", {})
     if args.milestone not in req_cases:
-        print(f"Error: Milestone '{args.milestone}' is not defined in manifest requiredCaseIds")
+        print(f"Error: Milestone '{args.milestone}' is not defined in manifest requiredCaseIds", file=sys.stderr)
         sys.exit(1)
-        
+
+    milestone_cases = req_cases[args.milestone]
     cases_catalog = manifest.get("cases", {})
-    upstream_selected = [cid for cid in req_cases[args.milestone] if cases_catalog.get(cid, {}).get("oracle") == "upstream-pi"]
-    invariant_selected = [cid for cid in req_cases[args.milestone] if cases_catalog.get(cid, {}).get("oracle") == "pi-rs-invariant"]
+    upstream_root = os.environ.get("PI_UPSTREAM_ROOT")
 
-    for cid in invariant_selected:
-        print(f"Skipping pi-rs-invariant case: {cid} (handled by invariant spec stubs)")
+    # Preflight check
+    try:
+        preflight_info = validate_preflight(
+            upstream_root,
+            args.reference_commit,
+            args.reference_version,
+            args.reference_lockfile_sha256,
+            milestone_cases,
+            cases_catalog,
+            adapters=adapters
+        )
+    except Exception as e:
+        print(f"Preflight check failed: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    if not upstream_selected:
-        print(f"No upstream-pi cases selected for milestone '{args.milestone}'; nothing to capture.", file=sys.stderr)
-        sys.exit(0)
-
-    capture_root = os.environ.get("PI_UPSTREAM_ROOT")
-    if not capture_root:
-        print("Error: PI_UPSTREAM_ROOT environment variable must point to the checked-out Pi reference directory before capture.", file=sys.stderr)
-        sys.exit(2)
-
-    fixtures_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures", "upstream-pi")
-    hashes = []
-    staged_updates = []
-
-    import tempfile
-    import shutil
+    fixtures_dir = os.path.dirname(MANIFEST_PATH)
+    per_case_hashes = {}
 
     with tempfile.TemporaryDirectory(prefix="capture_stage_") as temp_stage_dir:
-        for cid in upstream_selected:
-            adapter = ADAPTERS.get(cid)
-            if not adapter:
-                print(f"Error: No adapter implemented for case '{cid}'", file=sys.stderr)
-                sys.exit(1)
+        staged_manifest = json.loads(json.dumps(manifest))
+        if args.reference_version:
+            staged_manifest["reference"]["version"] = args.reference_version
+        if args.reference_commit:
+            staged_manifest["reference"]["commit"] = args.reference_commit
+        if args.reference_lockfile_sha256:
+            staged_manifest["reference"]["lockfileSha256"] = args.reference_lockfile_sha256
 
-            print(f"Capturing upstream case: {cid}...")
-            try:
-                res_data = adapter(capture_root)
-            except Exception as exc:
-                print(f"Capture failed for {cid}: {exc}", file=sys.stderr)
-                sys.exit(1)
+        # Process each case in milestone
+        for cid in milestone_cases:
+            info = cases_catalog.get(cid, {})
+            oracle = info.get("oracle")
+            if oracle == "upstream-pi":
+                adapter_fn = adapters[cid]
+                try:
+                    res_data = adapter_fn(upstream_root)
+                except Exception as exc:
+                    print(f"Adapter failed for case '{cid}': {exc}", file=sys.stderr)
+                    sys.exit(1)
 
-            expected_temp_path = os.path.join(temp_stage_dir, f"{cid}.expected.json")
-            with open(expected_temp_path, "w") as f:
-                json.dump(res_data, f, indent=2)
-                f.write("\n")
+                exp_stage_path = os.path.join(temp_stage_dir, f"{cid}.expected.json")
+                with open(exp_stage_path, "w", encoding="utf-8") as f:
+                    json.dump(res_data, f, indent=2)
+                    f.write("\n")
 
-            content_bytes = json.dumps(res_data, sort_keys=True).encode("utf-8")
-            raw_hash = hashlib.sha256(content_bytes).hexdigest()
-            hash_temp_path = os.path.join(temp_stage_dir, f"{cid}.raw-hash.txt")
-            with open(hash_temp_path, "w") as f:
-                f.write(f"{raw_hash}\n")
+                sc_hash = canonical_json_sha256(res_data)
+                hash_stage_path = os.path.join(temp_stage_dir, f"{cid}.raw-hash.txt")
+                with open(hash_stage_path, "w", encoding="utf-8") as f:
+                    f.write(f"{sc_hash}\n")
 
-            hashes.append(raw_hash)
-            cases_catalog[cid]["captured"] = True
+                per_case_hashes[cid] = sc_hash
+                staged_manifest["cases"][cid]["captured"] = True
 
-            staged_updates.append((expected_temp_path, os.path.join(fixtures_dir, f"{cid}.expected.json")))
-            staged_updates.append((hash_temp_path, os.path.join(fixtures_dir, f"{cid}.raw-hash.txt")))
+            elif oracle == "pi-rs-invariant":
+                # Copy unchanged invariant fixture/hash pairs into staging
+                exp_src = os.path.join(fixtures_dir, f"{cid}.expected.json")
+                hash_src = os.path.join(fixtures_dir, f"{cid}.raw-hash.txt")
 
-        capture_env = manifest.get("captureEnvironment", {})
-        capture_env["host"] = get_tool_version(["uname", "-m"]) or "unknown"
-        capture_env["nodeVersion"] = get_tool_version(["node", "--version"]) or "unknown"
-        capture_env["bunVersion"] = get_tool_version(["bun", "--version"]) or "unknown"
-        capture_env["capturedAt"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                if not os.path.exists(exp_src) or not os.path.exists(hash_src):
+                    print(f"Error: Missing invariant fixture files for '{cid}'", file=sys.stderr)
+                    sys.exit(1)
 
-        combined_hash = hashlib.sha256("".join(sorted(hashes)).encode("utf-8")).hexdigest()
-        capture_env["digest"] = f"sha256:{combined_hash}"
-        all_milestone_cases = req_cases[args.milestone]
-        captured_cases = [cid for cid in all_milestone_cases if cases_catalog.get(cid, {}).get("captured")]
-        capture_env["captureStatus"] = (
-            "completed" if len(captured_cases) == len(all_milestone_cases) else "partial"
-        )
+                shutil.copy2(exp_src, os.path.join(temp_stage_dir, f"{cid}.expected.json"))
+                shutil.copy2(hash_src, os.path.join(temp_stage_dir, f"{cid}.raw-hash.txt"))
 
-        manifest_temp_path = os.path.join(temp_stage_dir, "manifest.json")
-        with open(manifest_temp_path, "w") as f:
-            json.dump(manifest, f, indent=2)
+                with open(hash_src, "r", encoding="utf-8") as f:
+                    per_case_hashes[cid] = f.read().strip()
+
+        # Compute staged corpus digest
+        calc_digest = compute_corpus_digest(staged_manifest, temp_stage_dir, milestone=args.milestone)
+        if "corpusDigest" not in staged_manifest:
+            staged_manifest["corpusDigest"] = {}
+        staged_manifest["corpusDigest"][args.milestone] = calc_digest
+
+        # Write staged manifest.json
+        manifest_stage_path = os.path.join(temp_stage_dir, "manifest.json")
+        with open(manifest_stage_path, "w", encoding="utf-8") as f:
+            json.dump(staged_manifest, f, indent=2)
             f.write("\n")
 
-        # All adapters succeeded — commit/publish staged changes to destination
-        for src, dst in staged_updates:
-            shutil.copy2(src, dst)
+        # Validate staged manifest & corpus
+        staged_errors = validate_manifest(staged_manifest, milestone=args.milestone, fixtures_dir=temp_stage_dir)
+        if staged_errors:
+            print("Staged corpus validation FAILED:", file=sys.stderr)
+            for err in staged_errors:
+                print(f" - {err}", file=sys.stderr)
+            sys.exit(1)
 
-        shutil.copy2(manifest_temp_path, MANIFEST_PATH)
+        # Build capture-report data
+        capture_report = {
+            "upstreamRoot": upstream_root,
+            "gitHead": preflight_info["git_head"],
+            "requestedVersion": args.reference_version or staged_manifest["reference"]["version"],
+            "lockfileSha256": preflight_info["lockfile_sha256"],
+            "cleanTree": True,
+            "nodeVersion": preflight_info["node_version"],
+            "bunVersion": preflight_info["bun_version"],
+            "caseIds": milestone_cases,
+            "adapters": {cid: adapters[cid].__name__ for cid in milestone_cases if cid in adapters},
+            "perCaseCanonicalHashes": per_case_hashes,
+            "corpusDigest": calc_digest,
+            "mode": "staging" if is_staging else ("write" if is_write else "verify-committed"),
+            "capturedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        }
 
-    print(f"Reference capture complete for milestone {args.milestone}.")
+        output_dir = args.staging_dir or args.output
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            report_path = os.path.join(output_dir, "capture-report.json")
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(capture_report, f, indent=2)
+                f.write("\n")
 
+            # Also stage fixtures & manifest to output directory for staging mode
+            for fname in os.listdir(temp_stage_dir):
+                src = os.path.join(temp_stage_dir, fname)
+                dst = os.path.join(output_dir, fname)
+                if os.path.isfile(src):
+                    shutil.copy2(src, dst)
+
+        if is_staging:
+            print(f"Capture staging completed for milestone {args.milestone}: {output_dir}")
+            sys.exit(0)
+
+        if not is_write:
+            # --verify-committed mode: compare staged against committed fixtures
+            mismatches = []
+            for cid in milestone_cases:
+                exp_staged = os.path.join(temp_stage_dir, f"{cid}.expected.json")
+                exp_committed = os.path.join(fixtures_dir, f"{cid}.expected.json")
+                hash_staged = os.path.join(temp_stage_dir, f"{cid}.raw-hash.txt")
+                hash_committed = os.path.join(fixtures_dir, f"{cid}.raw-hash.txt")
+
+                with open(exp_staged, "r", encoding="utf-8") as f1, open(exp_committed, "r", encoding="utf-8") as f2:
+                    if f1.read() != f2.read():
+                        mismatches.append(f"Expected payload mismatch for case '{cid}'")
+                with open(hash_staged, "r", encoding="utf-8") as f1, open(hash_committed, "r", encoding="utf-8") as f2:
+                    if f1.read() != f2.read():
+                        mismatches.append(f"Sidecar hash mismatch for case '{cid}'")
+
+            if manifest.get("corpusDigest", {}).get(args.milestone) != calc_digest:
+                mismatches.append(f"Corpus digest mismatch for milestone '{args.milestone}'")
+
+            if mismatches:
+                print("Verification failed against committed fixtures:", file=sys.stderr)
+                for m in mismatches:
+                    print(f" - {m}", file=sys.stderr)
+                sys.exit(1)
+
+            print(f"Verification successful: staged corpus matches committed fixtures for milestone {args.milestone}.")
+            sys.exit(0)
+
+        # Write mode: Publish staged files with fail-closed transactional backups
+        files_to_publish = []
+        for cid in milestone_cases:
+            info = cases_catalog.get(cid, {})
+            if info.get("oracle") == "upstream-pi":
+                files_to_publish.append(f"{cid}.expected.json")
+                files_to_publish.append(f"{cid}.raw-hash.txt")
+
+        # Manifest must be published LAST as commit marker
+        backups = {}
+        created_files = []
+
+        try:
+            for fname in files_to_publish:
+                src = os.path.join(temp_stage_dir, fname)
+                dst = os.path.join(fixtures_dir, fname)
+                if os.path.exists(dst):
+                    bak = dst + ".bak"
+                    shutil.copy2(dst, bak)
+                    backups[dst] = bak
+                else:
+                    created_files.append(dst)
+                shutil.copy2(src, dst)
+
+            # Publish manifest last
+            manifest_dst = MANIFEST_PATH
+            if os.path.exists(manifest_dst):
+                bak = manifest_dst + ".bak"
+                shutil.copy2(manifest_dst, bak)
+                backups[manifest_dst] = bak
+            else:
+                created_files.append(manifest_dst)
+            shutil.copy2(manifest_stage_path, manifest_dst)
+
+            # Clean up backups on success
+            for bak in backups.values():
+                if os.path.exists(bak):
+                    os.remove(bak)
+
+            print(f"Capture write transaction completed for milestone {args.milestone}.")
+        except Exception as pub_err:
+            print(f"Publication transaction failed: {pub_err}. Rolling back...", file=sys.stderr)
+            # Restore backups
+            for dst, bak in backups.items():
+                if os.path.exists(bak):
+                    os.replace(bak, dst)
+            for cfile in created_files:
+                if os.path.exists(cfile):
+                    os.remove(cfile)
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

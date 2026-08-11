@@ -2,23 +2,23 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg?logo=rust)](https://www.rust-lang.org/)
-[![CI](https://github.com/nktkt/pi/actions/workflows/ci.yml/badge.svg)](https://github.com/nktkt/pi/actions/workflows/ci.yml)
+[![CI](https://github.com/sasazemzulin058-debug/pi-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/sasazemzulin058-debug/pi-rs/actions/workflows/ci.yml)
 [![pi-ai on crates.io](https://img.shields.io/crates/v/pi-ai.svg?label=pi-ai)](https://crates.io/crates/pi-ai)
 [![pi-agent on crates.io](https://img.shields.io/crates/v/pi-agent.svg?label=pi-agent)](https://crates.io/crates/pi-agent)
 
 A Rust port of [`earendil-works/pi`](https://github.com/earendil-works/pi) —
-the pi agent harness — focused on the core coding-agent loop.
+the pi agent harness — focused on the core coding-agent loop. Evaluated against main @ `fb9be67` and upstream `pi-mono` @ `f0deb8d`. Pinned old M1a oracle (`2efa728`) remains authoritative for M1a contract tests.
 
 The upstream project is a TypeScript monorepo (~189k LOC). This port covers
 the agent runtime, multi-provider LLM API, and CLI end-to-end and ships a
-working `pi` binary that talks to real Anthropic, OpenAI, Google, and any
+working `pi-rs` binary that talks to real Anthropic, OpenAI, Google, and any
 OpenAI-compatible endpoint.
 
 ## Layout
 
 ```
 pi/
-├─ Cargo.toml                       # workspace, version 1.0.0, MSRV 1.80
+├─ Cargo.toml                       # workspace, version 0.83.0, MSRV 1.80
 └─ crates/
    ├─ pi-ai/                        # ←→ packages/ai
    ├─ pi-agent/                     # ←→ packages/agent
@@ -26,10 +26,10 @@ pi/
 ```
 
 | TS package | Rust crate | Status |
-|------------|-----------|--------|
+| ------------ | ----------- | -------- |
 | `@earendil-works/pi-ai` | `pi-ai` | **SSE streaming** for Anthropic Messages, OpenAI Chat Completions, Google Generative AI. Retry with `Retry-After`. Cancellation token. Custom headers. OpenAI-compatible passthrough (OpenRouter, Groq, etc.). |
 | `@earendil-works/pi-agent-core` | `pi-agent` | Streaming `run_agent` loop with per-tool permission gate, typed `AgentError`, `#[instrument]` spans. Builtin tools: `read`, `write`, `edit`, `bash`, `ls`, `grep`, `glob`, `web_fetch`, `todo`. |
-| `@earendil-works/pi-coding-agent` | `pi-coding-agent` | `pi` CLI: print mode (`-p`), interactive REPL with streaming render, **session persistence** + `--resume`, **AGENTS.md / CLAUDE.md loader**, slash commands (`/help /reset /model /tools /cost /sessions /resume /session`), interactive permission prompts (`--yolo` to skip). `pi sessions list/show/delete` subcommand. |
+| `@earendil-works/pi-coding-agent` | `pi-coding-agent` | `pi-rs` CLI: print mode (`-p`), interactive REPL with streaming render, **session persistence** + `--resume`, **AGENTS.md / CLAUDE.md loader**, slash commands (`/help /reset /model /tools /cost /sessions /resume /session`), interactive permission prompts (`--yolo` to skip). `pi-rs sessions list/show/delete` subcommand. |
 | `@earendil-works/pi-tui` | — | Not ported (TS terminal renderer). |
 | `@earendil-works/pi-web-ui` | — | Not ported (browser components). |
 
@@ -56,8 +56,8 @@ See the crate-level docs at
 ## Quick start
 
 ```bash
-git clone https://github.com/nktkt/pi.git
-cd pi
+git clone https://github.com/sasazemzulin058-debug/pi-rs.git
+cd pi-rs
 cargo build --release
 
 export ANTHROPIC_API_KEY=sk-ant-...

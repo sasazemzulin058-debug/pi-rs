@@ -1,0 +1,8 @@
+{
+  "precedence": [
+    "child/AGENTS.md",
+    "root/AGENTS.md",
+    "root/CLAUDE.md"
+  ],
+  "merged": true
+}

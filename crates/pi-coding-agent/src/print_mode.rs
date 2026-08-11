@@ -22,11 +22,14 @@ pub async fn run_print(
     prompt: String,
     permission: Arc<dyn PermissionPolicy>,
     json_mode: bool,
-    trust_decision: crate::trust::TrustDecision,
+    trust_context: (
+        crate::trust::TrustDecision,
+        Option<crate::trust::CanonicalProjectRoot>,
+    ),
 ) -> anyhow::Result<()> {
     let cfg = AgentConfig::new(
         app.model.clone(),
-        build_system_prompt(&app.config_dir, trust_decision),
+        build_system_prompt(&app.config_dir, &trust_context),
     )
     .with_tools(default_tools())
     .with_max_turns(app.max_turns)
@@ -45,11 +48,15 @@ pub async fn run_print(
     }
 
     let res = handle.await??;
+    let mut session = crate::session::Session::new(&app.model);
+    session.replace_messages(res.messages.clone());
+    let _ = crate::session::save(&app.config_dir, &session);
     if json_mode {
         emit_json(&json!({
             "type": "agent_end",
             "stopped_at_turn_limit": res.stopped_at_turn_limit,
             "message_count": res.messages.len(),
+            "session_id": session.id,
         }));
     } else if res.stopped_at_turn_limit {
         eprintln!("(stopped at max turns)");
@@ -83,6 +90,7 @@ async fn run_human(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) {
             AgentEvent::PermissionDenied { tool_name, reason } => {
                 eprintln!("✗ permission denied for {tool_name}: {reason}");
             }
+            AgentEvent::PhaseChange { .. } | AgentEvent::Settlement { .. } => {}
             _ => {}
         }
     }
@@ -109,7 +117,7 @@ fn event_to_json(ev: &AgentEvent) -> serde_json::Value {
             let mut text = String::new();
             if let Message::Assistant(a) = message {
                 for c in &a.content {
-                    if let Content::Text { text: t } = c {
+                    if let Content::Text { text: t, .. } = c {
                         text.push_str(t);
                     }
                 }
@@ -149,6 +157,12 @@ fn event_to_json(ev: &AgentEvent) -> serde_json::Value {
             "tool_name": tool_name,
             "reason": reason,
         }),
+        AgentEvent::PhaseChange { phase } => {
+            json!({"type": "phase_change", "phase": format!("{phase:?}")})
+        }
+        AgentEvent::Settlement { cancelled, .. } => {
+            json!({"type": "settlement", "cancelled": cancelled})
+        }
         // AgentEnd is emitted by run_print after the channel closes so we know
         // the final state (stopped_at_turn_limit, etc.).
         AgentEvent::AgentEnd { .. } => serde_json::Value::Null,

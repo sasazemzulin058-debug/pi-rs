@@ -154,7 +154,7 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
                     .content
                     .iter()
                     .map(|c| match c {
-                        Content::Text { text } => json!({"type": "text", "text": text}),
+                        Content::Text { text, .. } => json!({"type": "text", "text": text}),
                         Content::Image { data, mime_type } => json!({
                             "type": "image",
                             "source": {"type": "base64", "media_type": mime_type, "data": data}
@@ -179,10 +179,11 @@ fn convert_messages(messages: &[Message]) -> Vec<Value> {
 
 fn content_to_block(c: &Content) -> Value {
     match c {
-        Content::Text { text } => json!({"type": "text", "text": text}),
+        Content::Text { text, .. } => json!({"type": "text", "text": text}),
         Content::Thinking {
             thinking,
             thinking_signature,
+            ..
         } => {
             let mut v = json!({"type": "thinking", "thinking": thinking});
             if let Some(sig) = thinking_signature {
@@ -198,6 +199,7 @@ fn content_to_block(c: &Content) -> Value {
             id,
             name,
             arguments,
+            ..
         } => json!({
             "type": "tool_use",
             "id": id,
@@ -309,6 +311,7 @@ struct BlockState {
     tool_id: String,
     tool_name: String,
     signature: Option<String>,
+    closed: bool,
 }
 
 #[derive(Default, PartialEq, Eq, Clone, Copy)]
@@ -413,6 +416,7 @@ impl Provider for AnthropicProvider {
             let mut stop = StopReason::Stop;
             let mut usage = Usage::default();
             let mut response_model: Option<String> = None;
+            let mut message_stop_seen = false;
 
             while let Some(ev) = sse.next().await {
                 if let Some(c) = &cancel_for_stream {
@@ -433,7 +437,10 @@ impl Provider for AnthropicProvider {
                 }
                 let parsed: SseEvent = match serde_json::from_str(&ev.data) {
                     Ok(p) => p,
-                    Err(_) => continue,
+                    Err(e) => {
+                        yield Err(Error::InvalidResponse(format!("malformed sse data: {e}")));
+                        return;
+                    }
                 };
                 match parsed {
                     SseEvent::Ping | SseEvent::Other => {}
@@ -458,6 +465,12 @@ impl Provider for AnthropicProvider {
                                 yield Ok(AssistantMessageEvent::ThinkingStart { content_index: index });
                             }
                             BlockStart::ToolUse { id, name } => {
+                                if id.trim().is_empty() || name.trim().is_empty() {
+                                    yield Err(Error::InvalidResponse(
+                                        "Anthropic tool call is missing an id or function name".into(),
+                                    ));
+                                    return;
+                                }
                                 st.kind = BlockKind::ToolUse;
                                 st.tool_id = id.clone();
                                 st.tool_name = name.clone();
@@ -471,7 +484,18 @@ impl Provider for AnthropicProvider {
                         }
                     }
                     SseEvent::ContentBlockDelta { index, delta } => {
-                        let st = blocks.entry(index).or_default();
+                        let Some(st) = blocks.get_mut(&index) else {
+                            yield Err(Error::InvalidResponse(format!(
+                                "Anthropic content block delta references unknown block {index}"
+                            )));
+                            return;
+                        };
+                        if st.kind == BlockKind::Unknown || st.closed {
+                            yield Err(Error::InvalidResponse(format!(
+                                "Anthropic content block delta references unknown or closed block {index}"
+                            )));
+                            return;
+                        }
                         match delta {
                             BlockDelta::TextDelta { text } => {
                                 st.text_buf.push_str(&text);
@@ -488,12 +512,29 @@ impl Provider for AnthropicProvider {
                             BlockDelta::SignatureDelta { signature } => {
                                 st.signature = Some(signature);
                             }
-                            BlockDelta::Other => {}
+                            BlockDelta::Other => {
+                                yield Err(Error::InvalidResponse(format!(
+                                    "Anthropic content block delta has unknown type for block {index}"
+                                )));
+                                return;
+                            }
                         }
                     }
                     SseEvent::ContentBlockStop { index } => {
-                        if let Some(st) = blocks.get(&index) {
-                            match st.kind {
+                        let Some(st) = blocks.get_mut(&index) else {
+                            yield Err(Error::InvalidResponse(format!(
+                                "Anthropic content block stop references unknown block {index}"
+                            )));
+                            return;
+                        };
+                        if st.closed {
+                            yield Err(Error::InvalidResponse(format!(
+                                "Anthropic content block {index} stopped more than once"
+                            )));
+                            return;
+                        }
+                        st.closed = true;
+                        match st.kind {
                                 BlockKind::Text => {
                                     yield Ok(AssistantMessageEvent::TextEnd { content_index: index, content: st.text_buf.clone() });
                                 }
@@ -504,7 +545,16 @@ impl Provider for AnthropicProvider {
                                     let args: Value = if st.json_buf.is_empty() {
                                         Value::Object(Default::default())
                                     } else {
-                                        serde_json::from_str(&st.json_buf).unwrap_or(Value::Object(Default::default()))
+                                        match serde_json::from_str(&st.json_buf) {
+                                            Ok(v) => v,
+                                            Err(e) => {
+                                                yield Err(Error::InvalidResponse(format!(
+                                                    "malformed tool call arguments for {}: {e}",
+                                                    st.tool_name
+                                                )));
+                                                return;
+                                            }
+                                        }
                                     };
                                     yield Ok(AssistantMessageEvent::ToolCallEnd {
                                         content_index: index,
@@ -513,9 +563,13 @@ impl Provider for AnthropicProvider {
                                         arguments: args,
                                     });
                                 }
-                                BlockKind::Unknown => {}
+                                BlockKind::Unknown => {
+                                    yield Err(Error::InvalidResponse(format!(
+                                        "Anthropic content block {index} has unknown type"
+                                    )));
+                                    return;
+                                }
                             }
-                        }
                     }
                     SseEvent::MessageDelta { delta, usage: maybe_usage } => {
                         if let Some(u) = maybe_usage {
@@ -530,7 +584,15 @@ impl Provider for AnthropicProvider {
                             };
                         }
                     }
-                    SseEvent::MessageStop => {}
+                    SseEvent::MessageStop => {
+                        if blocks.values().any(|st| !st.closed) {
+                            yield Err(Error::InvalidResponse(
+                                "Anthropic message_stop received before content block closure".into(),
+                            ));
+                            return;
+                        }
+                        message_stop_seen = true;
+                    }
                     SseEvent::Error { error } => {
                         let err_msg = format!("{}: {}", error.kind, error.message);
                         let mut err_usage = usage.clone();
@@ -540,6 +602,10 @@ impl Provider for AnthropicProvider {
                             api: api.clone(),
                             provider: provider.clone(),
                             model: response_model.clone().unwrap_or_else(|| model_id.clone()),
+                            response_model: response_model.clone(),
+                            response_id: None,
+                            diagnostics: None,
+                            raw_stop_reason: None,
                             usage: err_usage,
                             stop_reason: StopReason::Error,
                             error_message: Some(err_msg),
@@ -551,27 +617,54 @@ impl Provider for AnthropicProvider {
                 }
             }
 
+            if !message_stop_seen {
+                yield Err(Error::InvalidResponse(
+                    "Anthropic SSE ended before message_stop".into(),
+                ));
+                return;
+            }
+            if blocks.values().any(|st| !st.closed) {
+                yield Err(Error::InvalidResponse(
+                    "Anthropic SSE ended before content block closure".into(),
+                ));
+                return;
+            }
+
             usage.total_tokens = usage.input + usage.output;
             usage.cost = usage.compute_cost(&pricing);
             let mut out_content = Vec::with_capacity(order.len());
             for idx in &order {
                 if let Some(st) = blocks.get(idx) {
                     match st.kind {
-                        BlockKind::Text => out_content.push(Content::Text { text: st.text_buf.clone() }),
+                        BlockKind::Text => out_content.push(Content::Text {
+                            text: st.text_buf.clone(),
+                            text_signature: None,
+                        }),
                         BlockKind::Thinking => out_content.push(Content::Thinking {
                             thinking: st.text_buf.clone(),
                             thinking_signature: st.signature.clone(),
+                            redacted: None,
                         }),
                         BlockKind::ToolUse => {
                             let args: Value = if st.json_buf.is_empty() {
                                 Value::Object(Default::default())
                             } else {
-                                serde_json::from_str(&st.json_buf).unwrap_or(Value::Object(Default::default()))
+                                match serde_json::from_str(&st.json_buf) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        yield Err(Error::InvalidResponse(format!(
+                                            "malformed tool call arguments for {}: {e}",
+                                            st.tool_name
+                                        )));
+                                        return;
+                                    }
+                                }
                             };
                             out_content.push(Content::ToolCall {
                                 id: st.tool_id.clone(),
                                 name: st.tool_name.clone(),
                                 arguments: args,
+                                thought_signature: None,
                             });
                         }
                         BlockKind::Unknown => {}
@@ -582,7 +675,11 @@ impl Provider for AnthropicProvider {
                 content: out_content,
                 api,
                 provider,
-                model: response_model.unwrap_or(model_id),
+                model: response_model.clone().unwrap_or(model_id),
+                response_model,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage,
                 stop_reason: stop,
                 error_message: None,

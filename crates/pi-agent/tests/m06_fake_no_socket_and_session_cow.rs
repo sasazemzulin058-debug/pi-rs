@@ -47,10 +47,15 @@ async fn test_fake_provider_no_socket_streams_and_cancels() {
             message: AssistantMessage {
                 content: vec![Content::Text {
                     text: "hello".into(),
+                    text_signature: None,
                 }],
                 api: "openai-completions".into(),
                 provider: "test-provider".into(),
                 model: "test-model".into(),
+                response_model: None,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage: Usage::default(),
                 stop_reason: StopReason::Stop,
                 error_message: None,

@@ -18,6 +18,7 @@ fn round_trip_tool_call_content() {
         id: "call_1".into(),
         name: "read".into(),
         arguments: json!({"path": "/tmp/x"}),
+        thought_signature: None,
     };
     let v = serde_json::to_value(&c).unwrap();
     assert_eq!(v["type"], "toolCall");

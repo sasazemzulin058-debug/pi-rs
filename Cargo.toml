@@ -4,14 +4,15 @@ members = [
     "crates/pi-ai",
     "crates/pi-agent",
     "crates/pi-coding-agent",
+    "crates/pi-acp",
 ]
 
 [workspace.package]
-version = "1.2.0"
+version = "0.83.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
-repository = "https://github.com/earendil-works/pi"
+repository = "https://github.com/sasazemzulin058-debug/pi-rs"
 authors = ["Pi Rust Port Contributors"]
 
 [workspace.dependencies]

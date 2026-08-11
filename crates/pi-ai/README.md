@@ -1,6 +1,6 @@
 # pi-ai
 
-Unified multi-provider LLM API. Part of the [`pi`](https://github.com/nktkt/pi)
+Unified multi-provider LLM API. Part of the [`pi`](https://github.com/sasazemzulin058-debug/pi-rs)
 agent runtime — a Rust port of
 [`@earendil-works/pi-ai`](https://github.com/earendil-works/pi).
 

@@ -45,6 +45,39 @@ async fn write_then_read_roundtrips() {
 }
 
 #[tokio::test]
+async fn read_matches_upstream_trailing_newline_and_empty_bounds() {
+    let dir = scratch_dir();
+    let path = dir.join("lines.txt");
+    let empty = dir.join("empty.txt");
+    std::fs::write(&path, "one\ntwo\n").unwrap();
+    std::fs::write(&empty, "").unwrap();
+    let tool = read::ReadTool;
+    let text = tool
+        .execute("1", json!({"path": path, "offset": 2}))
+        .await
+        .unwrap()
+        .content[0]
+        .as_text()
+        .unwrap()
+        .to_string();
+    assert_eq!(text, "two\n");
+    let text = tool
+        .execute("2", json!({"path": empty}))
+        .await
+        .unwrap()
+        .content[0]
+        .as_text()
+        .unwrap()
+        .to_string();
+    assert_eq!(text, "");
+    let error = tool
+        .execute("3", json!({"path": empty, "offset": 2}))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "Offset 2 is beyond end of file (1 lines total)");
+}
+
+#[tokio::test]
 async fn edit_replaces_single_occurrence() {
     let dir = scratch_dir();
     let path = dir.join("a.txt");
@@ -54,11 +87,14 @@ async fn edit_replaces_single_occurrence() {
     let res = edit::EditTool
         .execute(
             "1",
-            json!({"path": path_s, "old_string": "bar", "new_string": "BAR"}),
+            json!({"path": path_s, "edits": [{"oldText": "bar", "newText": "BAR"}]}),
         )
         .await
         .unwrap();
-    assert!(res.content[0].as_text().unwrap().contains("edited"));
+    assert!(res.content[0]
+        .as_text()
+        .unwrap()
+        .contains("Successfully replaced 1 block(s)"));
     let diff = res.content[1].as_text().unwrap();
     assert!(
         diff.contains("-foo bar baz"),
@@ -70,6 +106,78 @@ async fn edit_replaces_single_occurrence() {
     );
     let after = std::fs::read_to_string(&path).unwrap();
     assert_eq!(after, "foo BAR baz");
+}
+
+#[tokio::test]
+async fn edit_multi_block_and_original_matching() {
+    let dir = scratch_dir();
+    let path = dir.join("a.txt");
+    std::fs::write(&path, "foo\nbar\nbaz\n").unwrap();
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "foo\n", "newText": "foo bar\n"},
+                {"oldText": "bar\n", "newText": "BAR\n"}
+            ]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"foo bar\nBAR\nbaz\n");
+}
+
+#[tokio::test]
+async fn edit_rejects_overlap_and_missing_without_write() {
+    let dir = scratch_dir();
+    let path = dir.join("a.txt");
+    let original = b"one\ntwo\nthree\n";
+    std::fs::write(&path, original).unwrap();
+    let error = edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "one\ntwo\n", "newText": "ONE\n"},
+                {"oldText": "two\nthree\n", "newText": "TWO\n"}
+            ]}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("overlap"));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let error = edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "one\n", "newText": "ONE\n"},
+                {"oldText": "missing\n", "newText": "MISSING\n"}
+            ]}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("Could not find edits[1]"));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[tokio::test]
+async fn edit_preserves_bom_and_crlf() {
+    let dir = scratch_dir();
+    let path = dir.join("a.txt");
+    let mut original = vec![0xef, 0xbb, 0xbf];
+    original.extend_from_slice(b"alpha\r\nbeta\r\ngamma\r\n");
+    std::fs::write(&path, &original).unwrap();
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "alpha\n", "newText": "ALPHA\n"},
+                {"oldText": "gamma\n", "newText": "GAMMA\n"}
+            ]}),
+        )
+        .await
+        .unwrap();
+    let mut expected = vec![0xef, 0xbb, 0xbf];
+    expected.extend_from_slice(b"ALPHA\r\nbeta\r\nGAMMA\r\n");
+    assert_eq!(std::fs::read(&path).unwrap(), expected);
 }
 
 #[tokio::test]
@@ -195,8 +303,11 @@ async fn bash_runs_simple_command() {
 async fn bash_persists_cwd_across_calls() {
     let tool: Arc<bash::BashTool> = Arc::new(bash::BashTool::new());
 
+    let temp = std::env::temp_dir();
+    let temp_str = temp.to_string_lossy();
+
     let res = tool
-        .execute("1", json!({"command": "cd /tmp"}))
+        .execute("1", json!({"command": format!("cd {}", temp_str)}))
         .await
         .unwrap();
     let text = res.content[0].as_text().unwrap();
@@ -204,5 +315,31 @@ async fn bash_persists_cwd_across_calls() {
 
     let res = tool.execute("2", json!({"command": "pwd"})).await.unwrap();
     let text = res.content[0].as_text().unwrap();
-    assert!(text.contains("/tmp"), "got: {text}");
+    let canonical_temp = temp.canonicalize().unwrap_or(temp.clone());
+    let canonical_temp_str = canonical_temp.to_string_lossy();
+    assert!(
+        text.contains(temp_str.as_ref()) || text.contains(canonical_temp_str.as_ref()),
+        "got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn bash_cancellation_sends_sigterm_before_sigkill() {
+    let tool = bash::BashTool::new();
+    let start = std::time::Instant::now();
+    // Trap SIGTERM in subshell, sleep 1 sec, then exit
+    let cmd = "trap 'echo term_received; exit 0' TERM; sleep 10";
+    let res = tool
+        .execute("1", json!({"command": cmd, "timeout_ms": 200}))
+        .await;
+    let elapsed = start.elapsed();
+    assert!(res.is_err(), "expected timeout error");
+    let err = res.unwrap_err();
+    assert!(err.contains("timed out"), "unexpected error string: {err}");
+    // Should terminate gracefully via SIGTERM within < 5s (well before 5s SIGKILL timeout)
+    assert!(
+        elapsed.as_millis() < 4000,
+        "cancellation took too long: {}ms",
+        elapsed.as_millis()
+    );
 }

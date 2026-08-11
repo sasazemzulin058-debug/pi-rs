@@ -11,12 +11,11 @@ In the CLI this surfaces as an interactive prompt:
 ```text
 Tool: bash
 Args: { "command": "cargo test" }
-[a]llow once, [s]ession-allow, [d]eny ?
+[y]es once, [a]llow-session, [d]eny ?
 ```
 
-Choosing **session-allow** caches the decision in memory for the
-remainder of the run; the next invocation of the same tool kind skips
-the prompt.
+Choosing **session-allow** caches tool name in memory for the current
+session. `/reset` clears this cache; next invocation prompts again.
 
 ## `--yolo`
 

@@ -7,7 +7,7 @@ jobs:
   baseline-verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Check out the untouched commit
           ref: '0808c756fa1991940def7f0f9837464417149419'
@@ -15,12 +15,12 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Verify baseline - cargo build workspace debug
         run: |
@@ -48,7 +48,7 @@ jobs:
           cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee -a baseline-report.txt
 
       - name: Upload baseline report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: m0-baseline-report
           path: baseline-report.txt

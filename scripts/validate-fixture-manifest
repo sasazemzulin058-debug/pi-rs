@@ -6,18 +6,38 @@ from contract_fixture_lib import load_manifest, validate_manifest
 def main():
     parser = argparse.ArgumentParser(description="Validate Pi compatibility fixture manifest")
     parser.add_argument("--milestone", help="Validate only this milestone, requiring all its cases to be captured")
+    parser.add_argument("--fixtures-dir", help="Path to fixtures directory", default=None)
+    parser.add_argument("--manifest-path", help="Path to manifest.json", default=None)
     args = parser.parse_args()
-    
+
     try:
-        manifest = load_manifest()
-        errors = validate_manifest(manifest, milestone=args.milestone)
-        
+        manifest_path = args.manifest_path
+        if args.fixtures_dir is not None:
+            import os
+            if not os.path.isdir(args.fixtures_dir):
+                raise ValueError(f"Fixtures directory does not exist: {args.fixtures_dir}")
+            cand = os.path.join(args.fixtures_dir, "manifest.json")
+            if not os.path.isfile(cand):
+                raise ValueError(f"Manifest not found in fixtures directory: {cand}")
+            if manifest_path is None:
+                manifest_path = cand
+
+        manifest = load_manifest(manifest_path) if manifest_path else load_manifest()
+        fixtures_dir = args.fixtures_dir
+        if fixtures_dir is None:
+            # Default to fixtures/upstream-pi alongside manifest.json
+            import os
+            from contract_fixture_lib import MANIFEST_PATH
+            fixtures_dir = os.path.dirname(MANIFEST_PATH)
+
+        errors = validate_manifest(manifest, milestone=args.milestone, fixtures_dir=fixtures_dir)
+
         if errors:
             print("Manifest validation FAILED:")
             for err in errors:
                 print(f" - {err}")
             sys.exit(1)
-            
+
         print("Manifest validation PASSED")
         sys.exit(0)
     except Exception as e:

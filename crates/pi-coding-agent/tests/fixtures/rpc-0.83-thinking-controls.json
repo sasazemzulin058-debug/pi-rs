@@ -1,0 +1,69 @@
+{
+  "metadata": {
+    "version": "0.83.0",
+    "commit": "f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee",
+    "sources": [
+      "packages/coding-agent/src/modes/rpc/rpc-types.ts",
+      "packages/coding-agent/src/modes/rpc/rpc-mode.ts",
+      "packages/coding-agent/src/core/agent-session.ts",
+      "packages/ai/src/models.ts"
+    ],
+    "evidenceKind": "source-attested"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "type": "get_available_thinking_levels",
+        "id": "req-avail"
+      },
+      "response": {
+        "type": "response",
+        "command": "get_available_thinking_levels",
+        "id": "req-avail",
+        "success": true,
+        "data": {
+          "levels": ["off", "minimal", "low", "medium", "high", "xhigh"]
+        }
+      }
+    },
+    {
+      "request": {
+        "type": "set_thinking_level",
+        "id": "req-set-high",
+        "level": "high"
+      },
+      "response": {
+        "type": "response",
+        "command": "set_thinking_level",
+        "id": "req-set-high",
+        "success": true
+      }
+    },
+    {
+      "request": {
+        "type": "cycle_thinking_level",
+        "id": "req-cycle"
+      },
+      "response": {
+        "type": "response",
+        "command": "cycle_thinking_level",
+        "id": "req-cycle",
+        "success": true,
+        "data": {
+          "level": "xhigh"
+        }
+      }
+    },
+    {
+      "request": {
+        "type": "set_thinking_level",
+        "level": "max"
+      },
+      "response": {
+        "type": "response",
+        "command": "set_thinking_level",
+        "success": true
+      }
+    }
+  ]
+}

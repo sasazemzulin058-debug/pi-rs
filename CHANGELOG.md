@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] — 2026-05-12
+## [0.83.0] — 2026-05-12
 
 Ten focused features merged in from 10 parallel sub-agent worktrees.
 
@@ -39,7 +39,7 @@ Ten focused features merged in from 10 parallel sub-agent worktrees.
     context lines use `path-lineno-line` (rg convention).
 
 - **`pi-coding-agent`**
-  - **`pi/config.toml`** — `$XDG_CONFIG_HOME/pi/config.toml` loaded before
+  - **`pi-rs/config.toml`** — `$XDG_CONFIG_HOME/pi-rs/config.toml` loaded before
     argv. Keys: `model`, `max_turns`, `thinking_level`, `yolo`, `json`.
     CLI flags and env still win; the file fills holes.
   - **`/compact` slash command** — summarizes older turns (anything before
@@ -59,7 +59,7 @@ Ten focused features merged in from 10 parallel sub-agent worktrees.
 
 ### Changed
 
-- Workspace bumped to **1.2.0**. Internal path-dep version specifiers
+- Workspace bumped to **0.83.0**. Internal path-dep version specifiers
   updated to match.
 
 ### Engineering notes

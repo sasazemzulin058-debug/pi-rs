@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+node_bin=${1:-node}
+case "$node_bin" in -*|'') echo 'usage: check-node-runtime [node-path]' >&2; exit 2;; esac
+version=$($node_bin --version) || exit 1
+case "$version" in v18.*|v19.*|v20.*|v21.*|v22.*|v23.*|v24.*) printf '%s\n' "$version";; *) echo "unsupported Node version: $version" >&2; exit 1;; esac

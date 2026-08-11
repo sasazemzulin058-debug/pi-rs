@@ -70,11 +70,12 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
                 let mut tool_calls: Vec<Value> = Vec::new();
                 for c in &a.content {
                     match c {
-                        Content::Text { text: t } => text.push_str(t),
+                        Content::Text { text: t, .. } => text.push_str(t),
                         Content::ToolCall {
                             id,
                             name,
                             arguments,
+                            ..
                         } => {
                             tool_calls.push(json!({
                                 "type": "function_call",
@@ -304,7 +305,10 @@ impl Provider for OpenAiResponsesProvider {
                     "response.output_text.delta" => {
                         let env: DeltaEnvelope = match serde_json::from_str(&ev.data) {
                             Ok(v) => v,
-                            Err(_) => continue,
+                            Err(e) => {
+                                yield Err(Error::InvalidResponse(format!("malformed sse data: {e}")));
+                                return;
+                            }
                         };
                         if let Some(d) = env.delta {
                             if !d.is_empty() {
@@ -323,7 +327,10 @@ impl Provider for OpenAiResponsesProvider {
                     "response.output_item.added" => {
                         let added: OutputItemAdded = match serde_json::from_str(&ev.data) {
                             Ok(v) => v,
-                            Err(_) => continue,
+                            Err(e) => {
+                                yield Err(Error::InvalidResponse(format!("malformed sse data: {e}")));
+                                return;
+                            }
                         };
                         let Some(item) = added.item else { continue };
                         if item.item_type != "function_call" {
@@ -331,6 +338,12 @@ impl Provider for OpenAiResponsesProvider {
                         }
                         let id = item.call_id.or(item.id.clone()).unwrap_or_default();
                         let name = item.name.unwrap_or_default();
+                        if id.is_empty() || name.is_empty() {
+                            yield Err(Error::InvalidResponse(
+                                "missing function_call id or name in response.output_item.added".into(),
+                            ));
+                            return;
+                        }
                         let idx = tool_calls.len();
                         tool_calls.push(PartialToolCall {
                             id: id.clone(),
@@ -353,25 +366,41 @@ impl Provider for OpenAiResponsesProvider {
                     "response.function_call_arguments.delta" => {
                         let env: DeltaEnvelope = match serde_json::from_str(&ev.data) {
                             Ok(v) => v,
-                            Err(_) => continue,
+                            Err(e) => {
+                                yield Err(Error::InvalidResponse(format!("malformed sse data: {e}")));
+                                return;
+                            }
                         };
                         let Some(d) = env.delta else { continue };
-                        let idx = env
+                        let idx_opt = env
                             .item_id
                             .as_ref()
                             .and_then(|id| item_index_map.get(id).copied())
-                            .or(env.output_index)
-                            .unwrap_or_else(|| tool_calls.len().saturating_sub(1));
-                        if let Some(entry) = tool_calls.get_mut(idx) {
-                            entry.args.push_str(&d);
-                            let block_index = text_index
-                                + if text_started { 1 } else { 0 }
-                                + idx;
-                            yield Ok(AssistantMessageEvent::ToolCallDelta {
-                                content_index: block_index,
-                                delta: d,
-                            });
-                        }
+                            .or(env.output_index);
+                        let idx = match idx_opt {
+                            Some(i) => i,
+                            None if !tool_calls.is_empty() => tool_calls.len() - 1,
+                            None => {
+                                yield Err(Error::InvalidResponse(
+                                    "unmapped function call arguments delta index".into(),
+                                ));
+                                return;
+                            }
+                        };
+                        let Some(entry) = tool_calls.get_mut(idx) else {
+                            yield Err(Error::InvalidResponse(
+                                "out-of-bounds function call arguments delta index".into(),
+                            ));
+                            return;
+                        };
+                        entry.args.push_str(&d);
+                        let block_index = text_index
+                            + if text_started { 1 } else { 0 }
+                            + idx;
+                        yield Ok(AssistantMessageEvent::ToolCallDelta {
+                            content_index: block_index,
+                            delta: d,
+                        });
                     }
                     "response.completed" => {
                         break;
@@ -394,13 +423,25 @@ impl Provider for OpenAiResponsesProvider {
 
             let mut out_content: Vec<Content> = Vec::new();
             if text_started {
-                out_content.push(Content::Text { text: text_buf.clone() });
+                out_content.push(Content::Text {
+                    text: text_buf.clone(),
+                    text_signature: None,
+                });
             }
             for (i, tc) in tool_calls.into_iter().enumerate() {
                 let args: Value = if tc.args.is_empty() {
                     Value::Object(Default::default())
                 } else {
-                    serde_json::from_str(&tc.args).unwrap_or(Value::Object(Default::default()))
+                    match serde_json::from_str(&tc.args) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            yield Err(Error::InvalidResponse(format!(
+                                "malformed tool call arguments for {}: {e}",
+                                tc.name
+                            )));
+                            return;
+                        }
+                    }
                 };
                 let block_index = text_index + i;
                 yield Ok(AssistantMessageEvent::ToolCallEnd {
@@ -413,6 +454,7 @@ impl Provider for OpenAiResponsesProvider {
                     id: tc.id,
                     name: tc.name,
                     arguments: args,
+                    thought_signature: None,
                 });
             }
 
@@ -420,7 +462,11 @@ impl Provider for OpenAiResponsesProvider {
                 content: out_content,
                 api,
                 provider,
-                model: model_id,
+                model: model_id.clone(),
+                response_model: Some(model_id),
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
                 usage,
                 stop_reason: stop,
                 error_message: None,

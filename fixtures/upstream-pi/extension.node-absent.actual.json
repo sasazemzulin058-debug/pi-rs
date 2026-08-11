@@ -1,0 +1,5 @@
+{
+  "extension_host_enabled": false,
+  "fallback": "native-rust-only",
+  "node_installed": false
+}

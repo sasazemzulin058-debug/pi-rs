@@ -1,7 +1,7 @@
 # pi-coding-agent
 
 Interactive coding agent CLI. Part of the
-[`pi-rs`](https://github.com/nktkt/pi) agent harness — a Rust port of
+[`pi-rs`](https://github.com/sasazemzulin058-debug/pi-rs) agent harness — a Rust port of
 [`@earendil-works/pi-coding-agent`](https://github.com/earendil-works/pi).
 
 The crate name is `pi-coding-agent`; the installed binary is `pi-rs`.
@@ -64,7 +64,7 @@ PI_MODEL=gemini-2.0-flash  pi-rs -p "..."
 ## What's included
 
 - Streaming text — assistant output prints as it arrives.
-- **Session persistence** under `$XDG_CONFIG_HOME/pi/sessions/<id>.json`,
+- **Session persistence** under `$XDG_CONFIG_HOME/pi-rs/sessions/<id>.jsonl`,
   saved after every turn.
 - **AGENTS.md / CLAUDE.md / `.pi/instructions.md`** loader walks up from the
   current directory and concatenates each file into the system prompt.

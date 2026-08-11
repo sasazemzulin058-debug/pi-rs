@@ -27,6 +27,66 @@ fn is_executable(path: &std::path::Path) -> bool {
     }
 }
 
+/// Resolves shell according to the 5-step fallback chain:
+/// 1. Executable absolute `$SHELL`
+/// 2. `$SHELL` name found through `PATH`
+/// 3. Executable `$PREFIX/bin/sh`
+/// 4. `sh` found through `PATH`
+/// 5. Failure
+fn resolve_shell() -> Result<PathBuf, String> {
+    if let Ok(shell_val) = std::env::var("SHELL") {
+        let trimmed = shell_val.trim();
+        if !trimmed.is_empty() {
+            let path = PathBuf::from(trimmed);
+            // 1. Executable absolute $SHELL
+            if path.is_absolute() {
+                if is_executable(&path) {
+                    return Ok(path);
+                }
+            } else {
+                // 2. $SHELL name found through PATH
+                if let Ok(path_var) = std::env::var("PATH") {
+                    for dir in std::env::split_paths(&path_var) {
+                        let candidate = dir.join(trimmed);
+                        if is_executable(&candidate) {
+                            return Ok(candidate);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Executable $PREFIX/bin/sh
+    if let Ok(prefix) = std::env::var("PREFIX") {
+        let trimmed = prefix.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed).join("bin").join("sh");
+            if is_executable(&candidate) {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    // 4. `sh` found through PATH
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join("sh");
+            if is_executable(&candidate) {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    // Direct check for /bin/sh or similar if PATH is empty or missing
+    let fallback_sh = PathBuf::from("/bin/sh");
+    if is_executable(&fallback_sh) {
+        return Ok(fallback_sh);
+    }
+
+    Err("No valid shell binary found (checked $SHELL, $PREFIX/bin/sh, and PATH)".to_string())
+}
+
 pub struct BashTool {
     cwd: Mutex<PathBuf>,
 }
@@ -37,6 +97,30 @@ impl BashTool {
         Self {
             cwd: Mutex::new(cwd),
         }
+    }
+
+    async fn terminate_child(child: &mut tokio::process::Child) {
+        #[cfg(unix)]
+        {
+            if let Some(pid) = child.id() {
+                let pgid = -(pid as i32);
+                unsafe {
+                    libc::kill(pgid, libc::SIGTERM);
+                }
+                // Bounded wait up to 5 seconds for termination following SIGTERM
+                let graceful = timeout(Duration::from_secs(5), child.wait()).await;
+                if graceful.is_err() {
+                    unsafe {
+                        libc::kill(pgid, libc::SIGKILL);
+                    }
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                }
+                return;
+            }
+        }
+        let _ = child.kill().await;
+        let _ = child.wait().await;
     }
 }
 
@@ -99,16 +183,7 @@ impl AgentTool for BashTool {
 
         let cwd_snapshot = { self.cwd.lock().await.clone() };
 
-        let shell_candidate = std::env::var("SHELL")
-            .ok()
-            .filter(|s| {
-                let trimmed = s.trim();
-                !trimmed.is_empty()
-                    && (trimmed == "sh"
-                        || trimmed == "bash"
-                        || is_executable(std::path::Path::new(trimmed)))
-            })
-            .unwrap_or_else(|| "sh".to_string());
+        let shell_candidate = resolve_shell()?;
 
         let mut cmd_builder = Command::new(&shell_candidate);
         cmd_builder
@@ -121,26 +196,7 @@ impl AgentTool for BashTool {
         #[cfg(unix)]
         cmd_builder.process_group(0);
 
-        let spawn_res = cmd_builder.spawn();
-
-        let mut child = match spawn_res {
-            Ok(c) => c,
-            Err(_) if shell_candidate != "sh" => {
-                let mut fallback = Command::new("sh");
-                fallback
-                    .arg("-lc")
-                    .arg(cmd)
-                    .current_dir(&cwd_snapshot)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                #[cfg(unix)]
-                fallback.process_group(0);
-                fallback
-                    .spawn()
-                    .map_err(|e| format!("spawn fallback sh: {e}"))?
-            }
-            Err(e) => return Err(format!("spawn: {e}")),
-        };
+        let mut child = cmd_builder.spawn().map_err(|e| format!("spawn: {e}"))?;
 
         let mut stdout = child
             .stdout
@@ -220,26 +276,14 @@ impl AgentTool for BashTool {
                 s
             }
             Ok(Err(e)) => {
-                #[cfg(unix)]
-                if let Some(pid) = child.id() {
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGKILL);
-                    }
-                }
-                let _ = child.kill().await;
+                Self::terminate_child(&mut child).await;
                 let _ = stdout_task.await;
                 let _ = stderr_task.await;
                 let _ = collector.await;
                 return Err(format!("wait: {e}"));
             }
             Err(_) => {
-                #[cfg(unix)]
-                if let Some(pid) = child.id() {
-                    unsafe {
-                        libc::kill(-(pid as i32), libc::SIGKILL);
-                    }
-                }
-                let _ = child.kill().await;
+                Self::terminate_child(&mut child).await;
                 let _ = stdout_task.await;
                 let _ = stderr_task.await;
                 let _ = collector.await;
