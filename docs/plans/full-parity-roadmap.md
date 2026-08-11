@@ -25,7 +25,7 @@ Status vocabulary: **supported**, **partial**, **candidate**, **read-only**,
 - `python3 scripts/validate-fixture-manifest`,
   `python3 -m unittest discover -s tests/contract -p 'test_*.py' -v`,
   `./scripts/check-doc-consistency`, and `./scripts/check-acp-schema` pass.
-- Rust RPC tests pass internal checks only. Upstream defines 36 RPC commands;
+- Rust RPC tests pass internal checks only. Upstream defines 32 RPC commands;
   Rust recognizes 11 (`prompt`, `steer`, `follow_up`, `abort`, `new_session`,
   `get_state`, `set_steering_mode`, `set_follow_up_mode`,
   `set_thinking_level`, `cycle_thinking_level`,
@@ -51,7 +51,7 @@ in `docs/compatibility-matrix.md`.
 
 ### Track B — Pi JSONL RPC
 
-1. Treat upstream `packages/coding-agent/src/modes/rpc/rpc-types.ts` as 36-command
+1. Treat upstream `packages/coding-agent/src/modes/rpc/rpc-types.ts` as 32-command
    denominator.
 2. Expand Rust RPC beyond current exact 11/32 recognized subset: model controls,
    full thinking-level semantics, compaction/retry, bash, session
@@ -71,10 +71,11 @@ atomic writes, and session recovery.
 
 1. Keep discovery status separate: project/global/explicit `.ts`, `.js`, and
    `package.json` candidates are discovered and diagnostics are emitted.
-2. Keep execution status separate: dynamic JS/TS runtime currently returns
-   `UnsupportedExtension` because no execution hook reaches agent tool registry.
-3. Later add versioned Node sidecar ABI, trusted canonical-root checks, handshake,
-   capabilities, registration, hooks, cancellation, UI, reproducible packaging.
+2. Current execution groundwork: versioned Node sidecar handshake, trusted
+   canonical-root checks, and narrow JS `tool_call` mutation/block hook. No manager
+   reaches the agent tool registry yet.
+3. Later add full versioned Node sidecar ABI, capabilities, registration, hooks,
+   cancellation, UI, reproducible packaging.
 4. Bun/private imports/native addons/custom TUI remain unsupported unless explicit
    compatibility contract added.
 
@@ -82,8 +83,9 @@ atomic writes, and session recovery.
 
 1. Keep vendored ACP schema/provenance and `./scripts/check-acp-schema`.
 2. Add schema-derived Rust types and strict codec.
-3. Add `--mode acp`, initialization, lifecycle, streaming, callbacks, and
-   conformance harness. None count toward Pi denominator.
+3. Current ACP implementation: `--mode acp` initialization-only, bounded transport,
+   and CLI tests. Add session lifecycle, streaming, callbacks, and conformance
+   harness. None count toward Pi denominator.
 
 ## Release gates
 
