@@ -5,9 +5,11 @@ pub mod openai_responses;
 
 use async_trait::async_trait;
 
-use crate::error::Result;
+use futures::StreamExt;
+
+use crate::error::{Error, Result};
 use crate::stream::AssistantMessageEventStream;
-use crate::types::{Context, Model, StreamOptions};
+use crate::types::{AssistantMessage, AssistantMessageEvent, Context, Model, StreamOptions};
 
 /// Provider implementation used by the default model dispatcher.
 #[async_trait]
@@ -29,6 +31,27 @@ pub trait ProviderFactory: Send + Sync {
         context: &Context,
         options: &StreamOptions,
     ) -> Result<AssistantMessageEventStream>;
+
+    /// Collect a full stream into a single AssistantMessage result.
+    async fn complete(
+        &self,
+        model: &Model,
+        context: &Context,
+        options: &StreamOptions,
+    ) -> Result<AssistantMessage> {
+        let mut stream = self.stream(model, context, options).await?;
+        while let Some(event_res) = stream.next().await {
+            let event = event_res?;
+            match event {
+                AssistantMessageEvent::Done { message, .. } => return Ok(message),
+                AssistantMessageEvent::Error { error, .. } => return Ok(error),
+                _ => {}
+            }
+        }
+        Err(Error::InvalidResponse(
+            "Stream ended without Done event".into(),
+        ))
+    }
 }
 
 /// Default provider factory preserving the existing model dispatch.

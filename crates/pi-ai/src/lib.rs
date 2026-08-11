@@ -25,6 +25,17 @@ pub use types::{
     ToolResultMessage, Usage,
 };
 
+/// Entry point that mirrors `complete()` in pi-ai TS: collect `stream_simple` into full message.
+pub async fn complete(
+    model: &Model,
+    context: &Context,
+    options: &StreamOptions,
+) -> Result<AssistantMessage> {
+    DefaultProviderFactory
+        .complete(model, context, options)
+        .await
+}
+
 /// Entry point that mirrors `streamSimple()` in pi-ai TS: pick the provider
 /// implementation from `model.api` and return a stream of message events.
 ///
