@@ -82,8 +82,17 @@ pub async fn run_agent(
 /// Continue a run with an existing transcript. Use this for `pi-rs --resume`.
 pub async fn run_agent_with_history(
     config: &AgentConfig,
+    messages: Vec<Message>,
+    events: Option<mpsc::UnboundedSender<AgentEvent>>,
+) -> Result<AgentRun> {
+    run_agent_with_history_and_steering(config, messages, events, Arc::new(Vec::new)).await
+}
+
+pub(crate) async fn run_agent_with_history_and_steering(
+    config: &AgentConfig,
     mut messages: Vec<Message>,
     events: Option<mpsc::UnboundedSender<AgentEvent>>,
+    get_steering: Arc<dyn Fn() -> Vec<Message> + Send + Sync>,
 ) -> Result<AgentRun> {
     if let Some(last) = messages.last().cloned() {
         emit(&events, AgentEvent::UserMessage { message: last });
@@ -109,6 +118,14 @@ pub async fn run_agent_with_history(
     let mut stopped_at_turn_limit = false;
 
     'outer: while turn < config.runtime_limits.max_turns {
+        let steering = get_steering();
+        if !steering.is_empty() {
+            for msg in steering {
+                messages.push(msg.clone());
+                emit(&events, AgentEvent::UserMessage { message: msg });
+            }
+        }
+
         turn += 1;
         emit(&events, AgentEvent::TurnStart);
 
@@ -185,100 +202,112 @@ pub async fn run_agent_with_history(
             })
             .collect();
 
-        if tool_calls.is_empty() || stop != StopReason::ToolUse {
-            emit(&events, AgentEvent::TurnEnd);
-            break 'outer;
-        }
+        let has_tool_calls = !tool_calls.is_empty() && stop == StopReason::ToolUse;
+        let mut any_terminate = false;
 
-        let mut any_terminate = !tool_calls.is_empty();
-        for (id, name, args) in tool_calls {
-            // Permission gate (only for tools that require it, and only once
-            // per name per run if the user said "allow session").
-            let tool_obj = tool_index.get(&name);
-            let needs_perm = tool_obj.map(|t| t.requires_permission()).unwrap_or(false)
-                && !session_allowed.contains(&name);
-            if needs_perm {
-                match config.permission.check(&name, &args).await {
-                    PermissionDecision::Allow => {}
-                    PermissionDecision::AllowSession => {
-                        session_allowed.insert(name.clone());
-                        remember_session_permission(&config.permission, name.clone());
-                    }
-                    PermissionDecision::Deny { reason } => {
-                        emit(
-                            &events,
-                            AgentEvent::PermissionDenied {
-                                tool_name: name.clone(),
-                                reason: reason.clone(),
-                            },
-                        );
-                        let tr = ToolResultMessage {
-                            tool_call_id: id,
-                            tool_name: name,
-                            content: vec![Content::text(format!("permission denied: {reason}"))],
-                            is_error: true,
-                            details: None,
-                            usage: None,
-                            added_tool_names: None,
-                            timestamp: pi_ai::now_ms(),
-                        };
-                        messages.push(Message::ToolResult(tr));
-                        any_terminate = false;
-                        continue;
+        if has_tool_calls {
+            any_terminate = true;
+            for (id, name, args) in tool_calls {
+                // Permission gate (only for tools that require it, and only once
+                // per name per run if the user said "allow session").
+                let tool_obj = tool_index.get(&name);
+                let needs_perm = tool_obj.map(|t| t.requires_permission()).unwrap_or(false)
+                    && !session_allowed.contains(&name);
+                if needs_perm {
+                    match config.permission.check(&name, &args).await {
+                        PermissionDecision::Allow => {}
+                        PermissionDecision::AllowSession => {
+                            session_allowed.insert(name.clone());
+                            remember_session_permission(&config.permission, name.clone());
+                        }
+                        PermissionDecision::Deny { reason } => {
+                            emit(
+                                &events,
+                                AgentEvent::PermissionDenied {
+                                    tool_name: name.clone(),
+                                    reason: reason.clone(),
+                                },
+                            );
+                            let tr = ToolResultMessage {
+                                tool_call_id: id,
+                                tool_name: name,
+                                content: vec![Content::text(format!(
+                                    "permission denied: {reason}"
+                                ))],
+                                is_error: true,
+                                details: None,
+                                usage: None,
+                                added_tool_names: None,
+                                timestamp: pi_ai::now_ms(),
+                            };
+                            messages.push(Message::ToolResult(tr));
+                            any_terminate = false;
+                            continue;
+                        }
                     }
                 }
-            }
 
-            emit(
-                &events,
-                AgentEvent::ToolExecutionStart {
-                    tool_call_id: id.clone(),
-                    tool_name: name.clone(),
-                    args: args.clone(),
-                },
-            );
-            let (content, is_error, terminate) = match tool_obj {
-                Some(tool) => match tool.execute(&id, args).await {
-                    Ok(AgentToolResult {
-                        content,
-                        details: _,
-                        terminate,
-                    }) => (content, false, terminate),
-                    Err(e) => (vec![Content::text(format!("tool error: {e}"))], true, false),
-                },
-                None => (
-                    vec![Content::text(format!("unknown tool: {name}"))],
-                    true,
-                    false,
-                ),
-            };
-            if !terminate {
-                any_terminate = false;
-            }
-            emit(
-                &events,
-                AgentEvent::ToolExecutionEnd {
-                    tool_call_id: id.clone(),
-                    tool_name: name.clone(),
+                emit(
+                    &events,
+                    AgentEvent::ToolExecutionStart {
+                        tool_call_id: id.clone(),
+                        tool_name: name.clone(),
+                        args: args.clone(),
+                    },
+                );
+                let (content, is_error, terminate) = match tool_obj {
+                    Some(tool) => match tool.execute(&id, args).await {
+                        Ok(AgentToolResult {
+                            content,
+                            details: _,
+                            terminate,
+                        }) => (content, false, terminate),
+                        Err(e) => (vec![Content::text(format!("tool error: {e}"))], true, false),
+                    },
+                    None => (
+                        vec![Content::text(format!("unknown tool: {name}"))],
+                        true,
+                        false,
+                    ),
+                };
+                if !terminate {
+                    any_terminate = false;
+                }
+                emit(
+                    &events,
+                    AgentEvent::ToolExecutionEnd {
+                        tool_call_id: id.clone(),
+                        tool_name: name.clone(),
+                        is_error,
+                        content: content.clone(),
+                    },
+                );
+                let tr = ToolResultMessage {
+                    tool_call_id: id,
+                    tool_name: name,
+                    content,
                     is_error,
-                    content: content.clone(),
-                },
-            );
-            let tr = ToolResultMessage {
-                tool_call_id: id,
-                tool_name: name,
-                content,
-                is_error,
-                details: None,
-                usage: None,
-                added_tool_names: None,
-                timestamp: pi_ai::now_ms(),
-            };
-            messages.push(Message::ToolResult(tr));
+                    details: None,
+                    usage: None,
+                    added_tool_names: None,
+                    timestamp: pi_ai::now_ms(),
+                };
+                messages.push(Message::ToolResult(tr));
+            }
         }
+
         emit(&events, AgentEvent::TurnEnd);
-        if any_terminate {
-            break;
+        let steering = get_steering();
+        if !steering.is_empty() {
+            for msg in steering {
+                messages.push(msg.clone());
+                emit(&events, AgentEvent::UserMessage { message: msg });
+            }
+            continue 'outer;
+        }
+
+        if !has_tool_calls || any_terminate {
+            break 'outer;
         }
     }
 

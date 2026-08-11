@@ -167,7 +167,8 @@ pub struct AgentSessionState {
     pub messages: Vec<Message>,
     pub input_queue: VecDeque<Message>,
     pub steering_queue: VecDeque<Message>,
-    pub queue_mode: QueueMode,
+    pub steering_mode: QueueMode,
+    pub followup_mode: QueueMode,
     pub cancelled: bool,
     pub settled: bool,
 }
@@ -179,28 +180,19 @@ impl AgentSessionState {
             messages,
             input_queue: VecDeque::new(),
             steering_queue: VecDeque::new(),
-            queue_mode: QueueMode::All,
+            steering_mode: QueueMode::OneAtATime,
+            followup_mode: QueueMode::OneAtATime,
             cancelled: false,
             settled: false,
         }
     }
 
     pub fn queue_followup(&mut self, message: Message) -> crate::error::Result<()> {
-        if self.settled {
-            return Err(crate::error::AgentError::Other(
-                "session already settled".into(),
-            ));
-        }
         self.input_queue.push_back(message);
         Ok(())
     }
 
     pub fn queue_steering(&mut self, message: Message) -> crate::error::Result<()> {
-        if self.settled {
-            return Err(crate::error::AgentError::Other(
-                "session already settled".into(),
-            ));
-        }
         self.steering_queue.push_back(message);
         Ok(())
     }
@@ -209,17 +201,31 @@ impl AgentSessionState {
         self.cancelled = true;
     }
 
+    pub fn take_steering(&mut self) -> Vec<Message> {
+        if self.steering_queue.is_empty() {
+            return Vec::new();
+        }
+        match self.steering_mode {
+            QueueMode::All => self.steering_queue.drain(..).collect(),
+            QueueMode::OneAtATime => self.steering_queue.pop_front().into_iter().collect(),
+        }
+    }
+
+    pub fn take_followups(&mut self) -> Vec<Message> {
+        if self.input_queue.is_empty() {
+            return Vec::new();
+        }
+        match self.followup_mode {
+            QueueMode::All => self.input_queue.drain(..).collect(),
+            QueueMode::OneAtATime => self.input_queue.pop_front().into_iter().collect(),
+        }
+    }
+
     pub fn take_inputs(&mut self) -> Vec<Message> {
         if !self.steering_queue.is_empty() {
-            match self.queue_mode {
-                QueueMode::All => self.steering_queue.drain(..).collect(),
-                QueueMode::OneAtATime => self.steering_queue.pop_front().into_iter().collect(),
-            }
+            self.take_steering()
         } else {
-            match self.queue_mode {
-                QueueMode::All => self.input_queue.drain(..).collect(),
-                QueueMode::OneAtATime => self.input_queue.pop_front().into_iter().collect(),
-            }
+            self.take_followups()
         }
     }
 }

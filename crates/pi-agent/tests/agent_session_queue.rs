@@ -1,12 +1,109 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
-use pi_agent::{AgentConfig, AgentEvent, AgentSession, QueueMode, SessionPhase};
+use pi_agent::{
+    AgentConfig, AgentEvent, AgentSession, AgentTool, AgentToolResult, QueueMode, SessionPhase,
+};
 use pi_ai::{
     now_ms, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, Context,
     FakeProviderFactory, Message, Model, ProviderFactory, StopReason, StreamOptions, Usage,
 };
 use tokio::sync::{mpsc, Notify};
+use tokio::time::timeout;
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+struct SteeringTool {
+    tool_started: Arc<Notify>,
+    tool_release: Arc<Notify>,
+}
+
+#[async_trait]
+impl AgentTool for SteeringTool {
+    fn name(&self) -> &str {
+        "test_tool"
+    }
+
+    fn description(&self) -> &str {
+        "test tool description"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+
+    async fn execute(
+        &self,
+        _id: &str,
+        _args: serde_json::Value,
+    ) -> Result<AgentToolResult, String> {
+        self.tool_started.notify_one();
+        self.tool_release.notified().await;
+        Ok(AgentToolResult::text("tool result"))
+    }
+}
+
+struct SteeringRecordedCall {
+    messages: Vec<Message>,
+}
+
+struct SteeringTestProviderFactory {
+    calls: Arc<Mutex<Vec<SteeringRecordedCall>>>,
+}
+
+#[async_trait]
+impl ProviderFactory for SteeringTestProviderFactory {
+    async fn stream(
+        &self,
+        _model: &Model,
+        context: &Context,
+        _options: &StreamOptions,
+    ) -> pi_ai::Result<AssistantMessageEventStream> {
+        let mut calls = self.calls.lock().unwrap();
+        calls.push(SteeringRecordedCall {
+            messages: context.messages.clone(),
+        });
+        let call_count = calls.len();
+        drop(calls);
+
+        let msg = if call_count == 1 {
+            AssistantMessage {
+                content: vec![Content::ToolCall {
+                    id: "call_1".to_string(),
+                    name: "test_tool".to_string(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                }],
+                api: "openai-completions".to_string(),
+                provider: "test-provider".to_string(),
+                model: "test-model".to_string(),
+                response_model: None,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
+                usage: Usage::default(),
+                stop_reason: StopReason::ToolUse,
+                error_message: None,
+                timestamp: now_ms(),
+            }
+        } else {
+            test_assistant_msg("final response")
+        };
+
+        let stop = msg.stop_reason;
+
+        Ok(Box::pin(async_stream::stream! {
+            yield Ok(AssistantMessageEvent::Done {
+                reason: stop,
+                message: msg,
+            });
+        }))
+    }
+}
 
 struct BlockingProviderFactory {
     entered: Arc<Notify>,
@@ -57,6 +154,115 @@ impl ProviderFactory for CancelAwareProviderFactory {
     }
 }
 
+struct SequentialProviderFactory {
+    streams: Arc<Mutex<Vec<Vec<AssistantMessageEvent>>>>,
+}
+
+#[async_trait]
+impl ProviderFactory for SequentialProviderFactory {
+    async fn stream(
+        &self,
+        _model: &Model,
+        _context: &Context,
+        _options: &StreamOptions,
+    ) -> pi_ai::Result<AssistantMessageEventStream> {
+        let events = {
+            let mut streams = self.streams.lock().unwrap();
+            if streams.is_empty() {
+                vec![]
+            } else {
+                streams.remove(0)
+            }
+        };
+        Ok(Box::pin(async_stream::stream! {
+            for ev in events {
+                yield Ok(ev);
+            }
+        }))
+    }
+}
+
+struct NonToolSteeringProviderFactory {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+    calls: Arc<Mutex<Vec<Context>>>,
+}
+
+#[async_trait]
+impl ProviderFactory for NonToolSteeringProviderFactory {
+    async fn stream(
+        &self,
+        _model: &Model,
+        context: &Context,
+        _options: &StreamOptions,
+    ) -> pi_ai::Result<AssistantMessageEventStream> {
+        let mut calls = self.calls.lock().unwrap();
+        calls.push(context.clone());
+        let count = calls.len();
+        drop(calls);
+
+        let entered = self.entered.clone();
+        let release = self.release.clone();
+
+        let msg = if count == 1 {
+            test_assistant_msg("non-tool response 1")
+        } else {
+            test_assistant_msg("steered response 2")
+        };
+
+        Ok(Box::pin(async_stream::stream! {
+            if count == 1 {
+                entered.notify_one();
+                release.notified().await;
+            }
+            yield Ok(AssistantMessageEvent::Done {
+                reason: StopReason::Stop,
+                message: msg,
+            });
+        }))
+    }
+}
+
+struct ResumableCancelProviderFactory {
+    entered: Arc<Notify>,
+    run_count: Arc<Mutex<usize>>,
+    second_token_was_cancelled: Arc<Mutex<Option<bool>>>,
+}
+
+#[async_trait]
+impl ProviderFactory for ResumableCancelProviderFactory {
+    async fn stream(
+        &self,
+        _model: &Model,
+        _context: &Context,
+        options: &StreamOptions,
+    ) -> pi_ai::Result<AssistantMessageEventStream> {
+        let mut count = self.run_count.lock().unwrap();
+        *count += 1;
+        let current_run = *count;
+        drop(count);
+
+        let cancel = options.cancel.clone().expect("session cancellation token");
+        if current_run == 1 {
+            let entered = self.entered.clone();
+            Ok(Box::pin(async_stream::stream! {
+                entered.notify_one();
+                cancel.cancelled().await;
+                yield Err(pi_ai::Error::Cancelled);
+            }))
+        } else {
+            *self.second_token_was_cancelled.lock().unwrap() = Some(cancel.is_cancelled());
+            let msg = test_assistant_msg("success after abort");
+            Ok(Box::pin(async_stream::stream! {
+                yield Ok(AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: msg,
+                });
+            }))
+        }
+    }
+}
+
 fn test_model() -> Model {
     Model::openai_compat(
         "test-provider",
@@ -82,6 +288,190 @@ fn test_assistant_msg(text: &str) -> AssistantMessage {
         error_message: None,
         timestamp: now_ms(),
     }
+}
+
+#[tokio::test]
+async fn active_run_steering() {
+    let tool_started = Arc::new(Notify::new());
+    let tool_release = Arc::new(Notify::new());
+    let tool = Arc::new(SteeringTool {
+        tool_started: tool_started.clone(),
+        tool_release: tool_release.clone(),
+    });
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let factory = Arc::new(SteeringTestProviderFactory {
+        calls: calls.clone(),
+    });
+
+    let cfg = AgentConfig::new(test_model(), "system")
+        .with_tools(vec![tool])
+        .with_provider_factory(factory);
+
+    let session = AgentSession::new(cfg, vec![]);
+    session
+        .queue_followup(Message::user_text("initial prompt"))
+        .unwrap();
+
+    let session_clone = session.clone();
+    let run_handle = tokio::spawn(async move { session_clone.run(None).await });
+
+    tool_started.notified().await;
+    session
+        .queue_steering(Message::user_text("steer msg"))
+        .unwrap();
+    tool_release.notify_one();
+
+    run_handle.await.unwrap().unwrap();
+
+    let recorded = calls.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    let second_call_messages = &recorded[1].messages;
+    assert!(second_call_messages.iter().any(|m| match m {
+        Message::User { content, .. } => content.iter().any(|c| match c {
+            Content::Text { text, .. } => text == "steer msg",
+            _ => false,
+        }),
+        _ => false,
+    }));
+}
+
+#[tokio::test]
+async fn independent_queue_modes() {
+    let session = AgentSession::new(AgentConfig::new(test_model(), "sys"), vec![]);
+    session.set_steering_mode(QueueMode::All).unwrap();
+    session.set_followup_mode(QueueMode::OneAtATime).unwrap();
+
+    session.queue_steering(Message::user_text("s1")).unwrap();
+    session.queue_steering(Message::user_text("s2")).unwrap();
+    session.queue_followup(Message::user_text("f1")).unwrap();
+    session.queue_followup(Message::user_text("f2")).unwrap();
+
+    let mut st = session.state();
+    let steered = st.take_steering();
+    assert_eq!(steered.len(), 2);
+
+    let followed = st.take_followups();
+    assert_eq!(followed.len(), 1);
+    assert_eq!(st.input_queue.len(), 1);
+}
+
+#[tokio::test]
+async fn queue_modes_default_one_at_a_time() {
+    let session = AgentSession::new(AgentConfig::new(test_model(), "sys"), vec![]);
+    let st = session.state();
+    assert_eq!(st.steering_mode, QueueMode::OneAtATime);
+    assert_eq!(st.followup_mode, QueueMode::OneAtATime);
+}
+
+#[tokio::test]
+async fn reusable_after_normal_run() {
+    let events1 = vec![AssistantMessageEvent::Done {
+        reason: StopReason::Stop,
+        message: test_assistant_msg("reply1"),
+    }];
+    let events2 = vec![AssistantMessageEvent::Done {
+        reason: StopReason::Stop,
+        message: test_assistant_msg("reply2"),
+    }];
+
+    let factory = Arc::new(SequentialProviderFactory {
+        streams: Arc::new(Mutex::new(vec![events1, events2])),
+    });
+    let cfg = AgentConfig::new(test_model(), "sys").with_provider_factory(factory);
+
+    let session = AgentSession::new(cfg, vec![]);
+    session.queue_followup(Message::user_text("p1")).unwrap();
+    session.run(None).await.unwrap();
+
+    assert_eq!(session.state().phase, SessionPhase::Idle);
+
+    session.queue_followup(Message::user_text("p2")).unwrap();
+    session.run(None).await.unwrap();
+
+    assert_eq!(session.state().phase, SessionPhase::Idle);
+    assert_eq!(session.state().messages.len(), 4);
+    assert!(session.state().messages.iter().any(|m| match m {
+        Message::Assistant(a) => a.content.iter().any(|c| match c {
+            Content::Text { text, .. } => text == "reply2",
+            _ => false,
+        }),
+        _ => false,
+    }));
+}
+
+#[tokio::test]
+async fn reusable_after_abort() {
+    let entered = Arc::new(Notify::new());
+    let run_count = Arc::new(Mutex::new(0));
+    let second_token_was_cancelled = Arc::new(Mutex::new(None));
+    let factory = Arc::new(ResumableCancelProviderFactory {
+        entered: entered.clone(),
+        run_count: run_count.clone(),
+        second_token_was_cancelled: second_token_was_cancelled.clone(),
+    });
+    let cfg = AgentConfig::new(test_model(), "system").with_provider_factory(factory);
+    let session = AgentSession::new(cfg, vec![]);
+    session
+        .queue_followup(Message::user_text("cancel me"))
+        .unwrap();
+
+    let session_clone = session.clone();
+    let running = tokio::spawn(async move { session_clone.run(None).await });
+
+    timeout(TEST_TIMEOUT, entered.notified())
+        .await
+        .expect("cancel-aware provider did not start");
+    session.cancel();
+
+    let run_res = timeout(TEST_TIMEOUT, running)
+        .await
+        .expect("cancelled run did not finish")
+        .expect("join failed");
+    let err = run_res.expect_err("cancelled run should return error");
+    assert!(err.to_string().contains("request cancelled"));
+
+    assert_eq!(session.state().phase, SessionPhase::Idle);
+
+    session.queue_followup(Message::user_text("run 2")).unwrap();
+    timeout(TEST_TIMEOUT, session.run(None))
+        .await
+        .expect("reused session run did not finish")
+        .expect("run 2 failed");
+
+    assert_eq!(session.state().phase, SessionPhase::Idle);
+    assert_eq!(*run_count.lock().unwrap(), 2);
+    assert_eq!(
+        *second_token_was_cancelled.lock().unwrap(),
+        Some(false),
+        "second run received cancelled token"
+    );
+    assert!(session.state().messages.iter().any(|m| match m {
+        Message::Assistant(a) => a.content.iter().any(|c| match c {
+            Content::Text { text, .. } => text == "success after abort",
+            _ => false,
+        }),
+        _ => false,
+    }));
+}
+
+#[tokio::test]
+async fn idle_cancel_is_noop() {
+    let events = vec![AssistantMessageEvent::Done {
+        reason: StopReason::Stop,
+        message: test_assistant_msg("ok"),
+    }];
+    let factory = Arc::new(FakeProviderFactory::new(events));
+    let cfg = AgentConfig::new(test_model(), "sys").with_provider_factory(factory);
+    let session = AgentSession::new(cfg, vec![]);
+
+    session.cancel();
+    assert_eq!(session.state().phase, SessionPhase::Idle);
+
+    session.queue_followup(Message::user_text("hello")).unwrap();
+    session.run(None).await.unwrap();
+    assert_eq!(session.state().phase, SessionPhase::Idle);
+    assert_eq!(session.state().messages.len(), 2);
 }
 
 #[tokio::test]
@@ -121,95 +511,77 @@ async fn test_queue_order_and_one_at_a_time() {
 }
 
 #[tokio::test]
-async fn test_cancel_before_run_settles_once() {
-    let model = test_model();
-    let factory = Arc::new(FakeProviderFactory::new(vec![]));
-    let cfg = AgentConfig::new(model, "system").with_provider_factory(factory);
+async fn active_run_non_tool_steering() {
+    let entered = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let factory = Arc::new(NonToolSteeringProviderFactory {
+        entered: entered.clone(),
+        release: release.clone(),
+        calls: calls.clone(),
+    });
 
-    let session = AgentSession::new(cfg, vec![Message::user_text("prompt")]);
-    session.cancel();
-
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    session.run(Some(tx.clone())).await.unwrap();
-    assert!(session.is_settled());
-
-    // Calling run post-settlement or tick post-settlement
-    let err = session.run(Some(tx)).await.unwrap_err();
-    assert!(err.to_string().contains("already settled"));
-
-    let settlements: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
-        .filter_map(|event| match event {
-            AgentEvent::Settlement { cancelled, .. } => Some(cancelled),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(settlements, vec![true]);
-}
-
-#[tokio::test]
-async fn test_cancel_between_ticks_settles_once() {
-    let events = vec![AssistantMessageEvent::Done {
-        reason: StopReason::Stop,
-        message: test_assistant_msg("done"),
-    }];
-    let cfg = AgentConfig::new(test_model(), "system")
-        .with_provider_factory(Arc::new(FakeProviderFactory::new(events)));
+    let cfg = AgentConfig::new(test_model(), "sys").with_provider_factory(factory);
     let session = AgentSession::new(cfg, vec![]);
-    session.set_queue_mode(QueueMode::OneAtATime).unwrap();
-    session.queue_followup(Message::user_text("first")).unwrap();
+    session.queue_followup(Message::user_text("start")).unwrap();
+
+    let session_clone = session.clone();
+    let running = tokio::spawn(async move { session_clone.run(None).await });
+
+    timeout(TEST_TIMEOUT, entered.notified())
+        .await
+        .expect("first non-tool provider did not start");
+
     session
-        .queue_followup(Message::user_text("second"))
+        .queue_steering(Message::user_text("steer non tool"))
         .unwrap();
 
-    assert!(session.tick(None).await.unwrap());
-    assert_eq!(session.state().input_queue.len(), 1);
-    session.cancel();
+    release.notify_one();
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    session.run(Some(tx)).await.unwrap();
+    timeout(TEST_TIMEOUT, running)
+        .await
+        .expect("non-tool steering run did not finish")
+        .expect("join failed")
+        .expect("run failed");
 
-    let state = session.state();
-    assert!(state.cancelled);
-    assert!(state.settled);
-    assert_eq!(state.phase, SessionPhase::Settled);
-    assert_eq!(state.input_queue.len(), 1);
-    let settlements: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
-        .filter_map(|event| match event {
-            AgentEvent::Settlement { cancelled, .. } => Some(cancelled),
-            _ => None,
+    assert_eq!(session.state().phase, SessionPhase::Idle);
+    assert!(session.state().steering_queue.is_empty());
+
+    let recorded = calls.lock().unwrap();
+    assert_eq!(recorded.len(), 2, "provider should be called twice");
+
+    let second_call_messages = &recorded[1].messages;
+    let steering_count_in_context = second_call_messages
+        .iter()
+        .filter(|m| match m {
+            Message::User { content, .. } => content.iter().any(|c| match c {
+                Content::Text { text, .. } => text == "steer non tool",
+                _ => false,
+            }),
+            _ => false,
         })
-        .collect();
-    assert_eq!(settlements, vec![true]);
-}
+        .count();
+    assert_eq!(
+        steering_count_in_context, 1,
+        "second provider context should include steering message exactly once"
+    );
 
-#[tokio::test]
-async fn test_natural_settlement_once() {
-    let model = test_model();
-    let events = vec![AssistantMessageEvent::Done {
-        reason: StopReason::Stop,
-        message: test_assistant_msg("done"),
-    }];
-    let factory = Arc::new(FakeProviderFactory::new(events));
-    let cfg = AgentConfig::new(model, "system").with_provider_factory(factory);
-
-    let session = AgentSession::new(cfg, vec![]);
-    session.queue_followup(Message::user_text("hi")).unwrap();
-
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    session.run(Some(tx.clone())).await.unwrap();
-    assert!(session.is_settled());
-
-    // Second run fails post-settlement error
-    let err = session.run(Some(tx)).await.unwrap_err();
-    assert!(err.to_string().contains("already settled"));
-
-    let mut settlements = 0;
-    while let Ok(ev) = rx.try_recv() {
-        if matches!(ev, AgentEvent::Settlement { .. }) {
-            settlements += 1;
-        }
-    }
-    assert_eq!(settlements, 1);
+    let steering_count_in_session = session
+        .state()
+        .messages
+        .iter()
+        .filter(|m| match m {
+            Message::User { content, .. } => content.iter().any(|c| match c {
+                Content::Text { text, .. } => text == "steer non tool",
+                _ => false,
+            }),
+            _ => false,
+        })
+        .count();
+    assert_eq!(
+        steering_count_in_session, 1,
+        "session messages should contain steering message exactly once"
+    );
 }
 
 #[tokio::test]
@@ -237,33 +609,6 @@ async fn test_rejects_overlapping_run_and_tick() {
 }
 
 #[tokio::test]
-async fn test_queue_rejected_after_atomic_settlement() {
-    let cfg = AgentConfig::new(test_model(), "system")
-        .with_provider_factory(Arc::new(FakeProviderFactory::new(vec![])));
-    let session = AgentSession::new(cfg, vec![]);
-
-    session.run(None).await.unwrap();
-    assert_eq!(session.state().phase, SessionPhase::Settled);
-    assert!(session
-        .queue_followup(Message::user_text("late"))
-        .unwrap_err()
-        .to_string()
-        .contains("already settled"));
-    assert!(session
-        .queue_steering(Message::user_text("late steering"))
-        .unwrap_err()
-        .to_string()
-        .contains("already settled"));
-    assert!(session
-        .set_queue_mode(QueueMode::OneAtATime)
-        .unwrap_err()
-        .to_string()
-        .contains("already settled"));
-    assert!(session.state().input_queue.is_empty());
-    assert!(session.state().steering_queue.is_empty());
-}
-
-#[tokio::test]
 async fn test_cancel_interrupts_active_provider() {
     let entered = Arc::new(Notify::new());
     let factory = Arc::new(CancelAwareProviderFactory {
@@ -275,25 +620,12 @@ async fn test_cancel_interrupts_active_provider() {
         .queue_followup(Message::user_text("cancel me"))
         .unwrap();
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let running = {
-        let session = session.clone();
-        tokio::spawn(async move { session.run(Some(tx)).await })
-    };
+    let session_clone = session.clone();
+    let running = tokio::spawn(async move { session_clone.run(None).await });
     entered.notified().await;
     session.cancel();
 
     let err = running.await.unwrap().unwrap_err();
     assert!(err.to_string().contains("request cancelled"));
-    let state = session.state();
-    assert!(state.cancelled);
-    assert!(state.settled);
-    assert_eq!(state.phase, SessionPhase::Settled);
-    let settlements: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok())
-        .filter_map(|event| match event {
-            AgentEvent::Settlement { cancelled, .. } => Some(cancelled),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(settlements, vec![true]);
+    assert_eq!(session.state().phase, SessionPhase::Idle);
 }
