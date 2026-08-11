@@ -1,0 +1,10 @@
+#!/data/data/com.termux/files/usr/bin/sh
+set -eu
+case "${PREFIX-}" in
+  /data/data/com.termux/files/usr) ;;
+  *) echo 'install-node-termux: run inside Termux with safe PREFIX' >&2; exit 2 ;;
+esac
+if command -v pkg >/dev/null 2>&1; then exec pkg install -y nodejs-lts; fi
+if command -v apt >/dev/null 2>&1; then exec apt install -y nodejs-lts; fi
+echo 'install-node-termux: pkg or apt required' >&2
+exit 1

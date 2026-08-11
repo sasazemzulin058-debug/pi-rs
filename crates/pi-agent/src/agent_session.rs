@@ -14,7 +14,7 @@ pub use crate::types::{AgentConfig, AgentEvent, AgentSessionState, QueueMode, Se
 /// after that call returns.
 #[derive(Clone)]
 pub struct AgentSession {
-    config: AgentConfig,
+    config: Arc<Mutex<AgentConfig>>,
     state: Arc<Mutex<AgentSessionState>>,
     active_run: Arc<AsyncMutex<()>>,
     active_cancel: Arc<Mutex<Option<CancellationToken>>>,
@@ -23,11 +23,19 @@ pub struct AgentSession {
 impl AgentSession {
     pub fn new(config: AgentConfig, initial_messages: Vec<pi_ai::Message>) -> Self {
         Self {
-            config,
+            config: Arc::new(Mutex::new(config)),
             state: Arc::new(Mutex::new(AgentSessionState::new(initial_messages))),
             active_run: Arc::new(AsyncMutex::new(())),
             active_cancel: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn thinking_level(&self) -> pi_ai::ThinkingLevel {
+        self.config.lock().unwrap().thinking_level
+    }
+
+    pub fn set_thinking_level(&self, level: pi_ai::ThinkingLevel) {
+        self.config.lock().unwrap().thinking_level = level;
     }
 
     pub fn state(&self) -> AgentSessionState {
@@ -135,7 +143,7 @@ impl AgentSession {
         let cancel_token = CancellationToken::new();
         *self.active_cancel.lock().unwrap() = Some(cancel_token.clone());
 
-        let mut config = self.config.clone();
+        let mut config = self.config.lock().unwrap().clone();
         config.stream_options.cancel = Some(cancel_token);
 
         let state_arc = self.state.clone();

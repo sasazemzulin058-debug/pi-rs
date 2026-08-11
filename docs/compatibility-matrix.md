@@ -1,66 +1,98 @@
-# Compatibility Matrix
+# Pi Compatibility Matrix
 
-This document defines the implementation milestone and compatibility status of each documented Pi/OMP interface.
+## Denominator and scope
 
-## Compatibility Statuses
+Pi-only upstream denominator is `pi-mono` 0.83.0 at commit
+`f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee` (upstream checkout:
+`/data/data/com.termux/files/home/pi-mono-oracle-083`). This matrix inventories
+public coding-agent surfaces exported by
+`packages/coding-agent/src/index.ts` and `packages/coding-agent/src/core/sdk.ts`,
+plus Pi RPC commands from `packages/coding-agent/src/modes/rpc/rpc-types.ts`.
 
-* **candidate**: Inherited or planned behavior awaiting its required fixture on the declared target; it makes no Pi compatibility claim.
-* **supported**: Required fixture passes on the declared target.
-* **read-only**: Input is consumed but `pi-rs` never mutates/writes it.
-* **unsupported**: Stable diagnostic is emitted before intentional API use where detectable. Trusted legacy module top-level code can still execute before Node reports an unsupported runtime dependency.
-* **deferred**: Planned for a future milestone; no compatibility claim is active.
+ACP is external and appears only in separate appendix. ACP rows never enter Pi
+denominator or parity percentages. Node runtime/sidecar is separate from both
+Pi denominator and ACP.
 
----
+## Status vocabulary
 
-## Contracts Catalog
+- **supported**: behavior implemented and covered by declared evidence.
+- **partial**: behavior exists for subset; upstream-compatible coverage incomplete.
+- **candidate**: identified surface with no compatibility claim yet.
+- **read-only**: input can be consumed without mutation.
+- **unsupported**: intentional diagnostic or explicit non-support boundary.
+- **deferred**: planned, not implemented; no compatibility claim.
 
-### Milestone M1a (Termux Headless Slice)
+## Evidence ledger
 
-M1a fixture gate: all 13 required cases pass locally; hosted CI runs same gate except Termux-only environment case. Model routing: `gemini-2.0-flash` → Google Generative AI.
+| Evidence | Result | Boundary |
+| --- | --- | --- |
+| `python3 scripts/compare-contract-fixtures --milestone M1a --actual fixtures/upstream-pi` | **invalid actual corpus: 0 passed / 41 failures/errors** | Committed `*.actual.json` files are incomplete/stale and do not prove parity. |
+| `sh ./scripts/verify-termux` | passed locally | Generates transient actual corpus; does not repair committed comparator corpus or prove hosted attestation. |
+| `python3 scripts/validate-fixture-manifest` | passed | Manifest structure only. |
+| `./scripts/check-doc-consistency` | passed | Existing checker paths preserved; checker is not full denominator gate. |
+| `python3 -m unittest discover -s tests/contract -p 'test_*.py' -v` | 52 passed | Contract harness tests; not full upstream surface parity. |
+| `./scripts/check-acp-schema` | passed | ACP schema only; excluded from Pi denominator. |
+| Rust RPC tests | passed | Internal Rust behavior only; not upstream differential evidence. |
 
-| ID | Surface | Description / Contract | Status | Target Fixture |
-| --- | --- | --- | --- | --- |
-| `cli.print` | CLI | `--print` headless prompt execution | **supported** | `cli.print.basic` |
-| `agent.serial-tools` | Agent | Serial tool call validation, execution and cancellation | **supported** | `agent.serial-tool-loop` |
-| `provider.openai-chat` | Provider | OpenAI Chat Completions compatible SSE with local mock | **supported** | `provider.openai-chat.fragmented-sse` |
-| `tool.read` | Built-in Tool | Bounded text read with 1-indexed offsets (bounded UTF-8 text fixture `tool.read.bounds`; write/edit/grep/glob/ls/image and streamed bash remain partial/deferred) | **supported** | `tool.read.bounds` |
-| `tool.bash` | Built-in Tool | Shell execution, process-group cancellation and reaping | **supported** | `tool.bash.cancel-descendants` |
-| `resources.context` | Resources | Ancestor/current `AGENTS.md`, `CLAUDE.md`, or `.pi/instructions.md` context discovery | **partial** | `resource.context-precedence` |
-| `resources.trust` | Resources | Persisted trust decision data model; no project executable resource loading | **partial** | `resource.untrusted-project` |
-| `session.native-write` | Session | Fork-native versioned JSONL append/recovery format; legacy single JSON is accepted only as migration input | **supported** | `session.native-append-recover` |
-| `session.pi-import` | Session | Explicit API-only read-only import of original Pi v1/v2/v3 sessions; normal CLI resume does not auto-import | **read-only** | `session.pi-import-checksum` |
-| `session.pi-cow` | Session | COW fork-native session created on first mutation of an imported Pi session | **supported** | `session.pi-cow-provenance` |
-| `extension.none-required` | Extensions | Core functionality operates normally when Node is absent | **supported** | `extension.node-absent` |
+## Upstream public-surface inventory
 
-### Milestone M1 (Expanded Headless Pi)
+Paths below are upstream source paths relative to pinned checkout. Rust paths
+identify current implementation where present. Status describes current Rust
+coverage, not planned work.
 
-| ID | Surface | Description / Contract | Status | Target Fixture |
-| --- | --- | --- | --- | --- |
-| `cli.json-events` | CLI | Structured JSON event output | **deferred** | None |
-| `agent.retry-auto-compaction` | Agent | Serial retry and one automatic context-overflow compaction retry | **deferred** | None |
-| `tool.write` | Built-in Tool | Atomic write semantics | **deferred** | None |
-| `tool.edit` | Built-in Tool | Exact multi-edit semantics | **deferred** | None |
-| `tool.grep-find-ls` | Built-in Tool | Ignored-path discovery and bounded search | **deferred** | None |
-| `resources.skills-prompts-themes` | Resources | Skills, prompt templates and themes | **deferred** | None |
+| Surface | Upstream path | Rust path | Status |
+| --- | --- | --- | --- |
+| CLI args and parsing | `packages/coding-agent/src/cli/args.ts`; `src/index.ts` | `crates/pi-coding-agent/src/main.rs` | partial |
+| Config paths/version | `packages/coding-agent/src/config.ts`; `src/index.ts` | `crates/pi-coding-agent/src/file_config.rs` | partial |
+| AgentSession and events | `packages/coding-agent/src/core/agent-session.ts`; `src/index.ts` | `crates/pi-coding-agent/src/session.rs` | partial |
+| Auth storage | `packages/coding-agent/src/core/auth-storage.ts`; `src/index.ts` | `crates/pi-coding-agent/src/config.rs` | candidate |
+| Compaction API | `packages/coding-agent/src/core/compaction/index.ts`; `src/index.ts` | `crates/pi-coding-agent/src/session.rs` | partial |
+| Event bus | `packages/coding-agent/src/core/event-bus.ts`; `src/index.ts` | `crates/pi-coding-agent/src/` | candidate |
+| Extension types/runtime | `packages/coding-agent/src/core/extensions/index.ts`; `src/index.ts` | `crates/pi-coding-agent/src/extension.rs`, `extension_host.rs` | partial |
+| Footer data provider | `packages/coding-agent/src/core/footer-data-provider.ts`; `src/index.ts` | `crates/pi-coding-agent/src/tui.rs` | candidate |
+| Message conversion | `packages/coding-agent/src/core/messages.ts`; `src/index.ts` | `crates/pi-coding-agent/src/` | candidate |
+| Model registry | `packages/coding-agent/src/core/model-registry.ts`; `src/index.ts` | `crates/pi-ai/src/` | partial |
+| Model resolver/runtime | `packages/coding-agent/src/core/model-resolver.ts`, `model-runtime.ts`; `src/index.ts` | `crates/pi-ai/src/`, `crates/pi-coding-agent/src/config.rs` | partial |
+| Package manager | `packages/coding-agent/src/core/package-manager.ts`; `src/index.ts` | `crates/pi-coding-agent/src/resources.rs` | candidate |
+| Resource loader/context | `packages/coding-agent/src/core/resource-loader.ts`; `src/index.ts` | `crates/pi-coding-agent/src/resources.rs`, `system_prompt.rs` | partial |
+| Session manager/tree | `packages/coding-agent/src/core/session-manager.ts`; `src/index.ts` | `crates/pi-coding-agent/src/session.rs` | partial |
+| Settings manager | `packages/coding-agent/src/core/settings-manager.ts`; `src/index.ts` | `crates/pi-coding-agent/src/file_config.rs` | partial |
+| Skills | `packages/coding-agent/src/core/skills.ts`; `src/index.ts` | `crates/pi-coding-agent/src/resources.rs` | candidate |
+| Edit diff | `packages/coding-agent/src/core/tools/edit-diff.ts`; `src/index.ts` | `crates/pi-coding-agent/src/` | candidate |
+| Built-in tools: bash/edit/find/grep/ls/read/write | `packages/coding-agent/src/core/tools/*`; `src/index.ts` | `crates/pi-agent/src/tools/*` | partial |
+| SDK session factories | `packages/coding-agent/src/core/sdk.ts`; `src/index.ts` | `crates/pi-coding-agent/src/` | candidate |
+| SDK tool factories | `packages/coding-agent/src/core/sdk.ts`; `src/index.ts` | `crates/pi-agent/src/tools/*` | partial |
+| Interactive terminal/TUI | `packages/coding-agent/src/modes/interactive/*` | `crates/pi-coding-agent/src/tui.rs` | partial |
+| Pi JSONL RPC | `packages/coding-agent/src/modes/rpc/rpc-types.ts` | `crates/pi-coding-agent/src/rpc/types.rs`, `rpc/server.rs` | partial (11/32 recognized commands; thinking controls source-attested subset, `max` collapsed to `xhigh`, no upstream capture) |
 
-### Milestone M2 (Pi Interactive & Public API Parity)
+## Milestone catalog
 
-| ID | Surface | Description / Contract | Status | Target Fixture |
-| --- | --- | --- | --- | --- |
-| `cli.interactive` | CLI | Interactive terminal mode | **deferred** | None |
-| `cli.rpc` | CLI | Public Pi JSONL RPC | **deferred** | None |
-| `agent.parallel-tools` | Agent | Parallel batch ordering and cancellation | **deferred** | None |
-| `agent.manual-compaction-scheduling` | Agent | Manual compaction and scheduling interaction with queue/steer/follow-up | **deferred** | None |
-| `provider.anthropic` | Provider | Anthropic Messages | **deferred** | None |
-| `provider.openai-responses` | Provider | OpenAI Responses | **deferred** | None |
-| `provider.google` | Provider | Google Generative AI | **deferred** | None |
+| ID | Surface | Status | Evidence/target |
+| --- | --- | --- | --- |
+| `cli.print` | `--print` headless execution; model routing `gemini-2.0-flash` → Google Generative AI | supported | `cli.print.basic` |
+| `agent.serial-tools` | serial tool loop | supported | `agent.serial-tool-loop` |
+| `tool.read` | bounded read | supported | `tool.read.bounds` |
+| `tool.bash` | process execution/cancellation | supported | `tool.bash.cancel-descendants` |
+| `session.native-write` | native session append/recovery | supported | `session.native-append-recover` |
+| `session.pi-import` | explicit read-only Pi import | read-only | `session.pi-import-checksum` |
+| `session.pi-cow` | copy-on-write imported session | supported | `session.pi-cow-provenance` |
+| `extension.none-required` | operation without Node | supported | `extension.node-absent` |
+| `protocol.pi-jsonl-rpc` | Pi RPC command surface | partial | Rust recognizes 11 of upstream 32; thinking controls are source-attested only, `max` collapses to `xhigh`, and no upstream capture exists |
+| `extension.discovery` | discover project/global/explicit `.ts`, `.js`, `package.json` | partial | `crates/pi-coding-agent/src/extension.rs` |
+| `extension.execution` | execute discovered dynamic extensions | unsupported | diagnostic says runtime deferred; no agent-loop hook |
+| `protocol.acp-v1` | external ACP v1 JSON-RPC stdio | partial (active mode) | envelope validation and initialize only; sessions deferred; `fixtures/acp/v1/schema.json` |
 
-### Milestone M3 (Legacy Extension Host)
+## ACP appendix (external; excluded from denominator)
 
-| ID | Surface | Description / Contract | Status | Target Fixture |
-| --- | --- | --- | --- | --- |
-| `resources.remote-packages` | Resources | `npm:` and `git:` package source installation | **unsupported** | `resource.remote-package-diagnostic` |
-| `session.pi-inplace-write` | Session | In-place mutation of Pi session files | **unsupported** | `session.pi-inplace-write-diagnostic` |
-| `extension.pi-tier-a` | Extensions | Tools, commands, cancelable hooks, persisted state and basic UI via Node host | **deferred** | None |
-| `extension.bun-private-native-custom-ui` | Extensions | Bun APIs, private imports, native addons and custom Pi TUI components | **unsupported** | `extension.unsupported-capability` |
-| `extension.omp` | Extensions | Oh My Pi public API intersection | **deferred** | None |
+`protocol.acp-v1` is official ACP v1 JSON-RPC 2.0 over stdio, separate from
+Pi JSONL RPC. Current `pi-acp` provides generic envelope/transport groundwork;
+no coding-agent ACP mode, schema-derived semantic codec, callbacks, or
+conformance harness exists. ACP must not affect Pi parity status.
+
+## Node appendix (separate; excluded from denominator)
+
+`pi-rs` resolves and verifies Node >=18 for trusted sidecar work, with canonical
+root checks and handshake IPC. Discovery exists across project/global/explicit
+paths. Dynamic TypeScript/JavaScript execution remains unsupported and is not
+hooked into agent tool registration. Bun support, full extension API channels,
+UI, cancellation, and packaging remain deferred/unsupported.

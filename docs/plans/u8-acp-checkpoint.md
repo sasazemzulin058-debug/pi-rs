@@ -1,62 +1,39 @@
-# U8 ACP Checkpoint: Scope, Protocol Identity & Deferred Implementation
+# U8 ACP Checkpoint: Scope, Protocol Identity & Standard ACP Alignment
 
-## Status: Deferred / identity unresolved
+## Status: Standard ACP v1 Partial Transport Active / Conformance Deferred
 
-U8 has no implementation, workspace crate, codec dependency, fixture, or runtime transport. This checkpoint records roadmap facts and separates them from proposed implementation policy. It does not claim compatibility.
+U8 implementation targets the official Agent Client Protocol v1 standard (JSON-RPC 2.0 over stdio with schema-defined capabilities and callbacks), not legacy CBOR framing or custom binary protocols.
 
-## What roadmap currently says
+## Protocol Identity & Scope Boundaries
 
-`docs/plans/2026-08-03-current-main-completion-roadmap.md` lists U8 as **unsupported**, with an initial release-train target of **deferred** and a later goal of a supported local protocol-v2 subset. Roadmap description says that target uses strict CBOR, a 4-byte big-endian framing prefix, and local stdio/Unix-socket operation distinct from U5 JSONL RPC.
+“ACP” refers exclusively to the official Agent Client Protocol specification (https://agentclientprotocol.com/protocol/v1/overview).
 
-Roadmap also lists these eventual requirements:
+1. **Schema Authority**: Vendored JSON Schema (`fixtures/acp/v1/schema.json`) with strict SHA-256 provenance (`fixtures/acp/v1/provenance.json`). Official immutable release identity metadata was unavailable at pin time; provenance records exact mutable source URL and exact bytes hash.
+2. **Transport**: JSON-RPC 2.0 over stdio with stdout reserved for protocol messages and diagnostics on stderr. Recoverable malformed JSON/envelopes receive parse-error responses; oversized or broken transport fails.
+3. **Separation from Pi RPC**: U5 owns public Pi JSONL RPC (`--mode rpc`), which uses native Pi event schemas. U8 owns standard ACP v1 (`--mode acp`). Wire formats, capability negotiation, and message structures are kept completely separate.
+4. **Stale CBOR Claims Deleted**: Prior references to `crates/pi-protocol`, CBOR encoding, 4-byte big-endian frame headers, protocol-v2 Unix sockets, or revision snapshots when described as ACP are obsolete and removed.
 
-- bounded CBOR, framing, and schemas in a future `crates/pi-protocol` crate;
-- local stdio/Unix-socket server and client modes;
-- list/create/attach/detach/prompt/steer/abort/model/thinking operations and revisioned snapshots;
-- ownership release on disconnect;
-- cross-language vectors plus fragmented, multiple, truncated, oversized, handshake, lifecycle, lock, revision-order, and disconnect-cleanup tests.
+## Implementation Architecture & Phases
 
-These are roadmap requirements, not implemented behavior or verified compatibility.
+1. **Vendor Schema & Provenance**: Pinned official ACP v1 JSON schema and verification scripts (`scripts/check-acp-schema`).
+2. **Codec & Framing (`crates/pi-acp`)**: Bounded handwritten JSON-RPC 2.0 stdio framing crate. Schema-generated types and conformance remain deferred.
+3. **Initialization & Capabilities**: Negotiation of client/agent capabilities (`initialize` handshake, tool/terminal/filesystem capabilities).
+4. **Session Lifecycle & Prompting**: Session creation, prompt streaming, tool updates, cancellation, stop reasons.
+5. **Client Callbacks**: Routing client-side filesystem, terminal, and permission operations back through negotiated client callbacks.
+6. **Conformance Suite**: Automated verification script (`scripts/verify-acp-v1`) executing official/canonical test vectors.
 
-## Protocol identity remains unresolved
+## Deferred Scope & Security Boundaries
 
-“ACP” is ambiguous across external protocols. Current repository evidence does not identify a canonical upstream ACP specification, message schema, version, or authoritative TypeScript/Rust fixture set. The roadmap's phrase “pinned upstream binary protocol v2” is not enough to establish protocol identity.
-
-Therefore this document does **not** claim that the described CBOR framing is ACP-compatible, nor that `protocol.acp` has a compatibility-matrix status. `docs/compatibility-matrix.md` currently has no verified ACP contract entry. Do not add `supported`, `candidate`, or `deferred` ACP compatibility status until protocol identity and evidence are established.
-
-## U5 separation
-
-U5 owns public Pi JSONL RPC under `src/rpc`; U8 must not introduce a JSONL duplicate or relabel U5 messages as ACP. Any future U8 wire format requires separately identified protocol schemas and fixtures. This separation is a scope boundary, not evidence that either protocol is compatible with the other.
-
-## Proposed policy for any future U8 work
-
-The following are gates proposed by this checkpoint, not current roadmap facts:
-
-1. Record canonical protocol identity first: specification URL or repository/version, message schema, framing rules, and ownership of compatibility claims.
-2. Capture authoritative cross-language encode/decode vectors before adding codec or transport code. Include every declared message variant and canonical error behavior.
-3. Add malformed-input vectors for unknown fields, invalid types, truncated and oversized frames, invalid lengths, and invalid session/revision data. Reject failures without allocating unbounded memory or executing operations.
-4. Only after vectors pass, add the smallest bounded codec/framing crate and tests. Then add local stdio/Unix-socket lifecycle code with stdout reserved for protocol bytes and diagnostics on stderr.
-5. Update compatibility documentation only from passing, reproducible fixtures; never infer compatibility from type names, framing resemblance, or test counts.
-
-## Current blockers
-
-- Canonical ACP identity, version, schema, and authority are unspecified.
-- No authoritative CBOR vectors or framing fixtures are present.
-- No bounded frame-size value or error contract is approved.
-- No `crates/pi-protocol`, CBOR dependency, parser, server, client, handshake, or lifecycle implementation exists.
-- Ownership, session-lock, revision, disconnect, and operation semantics lack verified wire schemas.
-- Compatibility-matrix entry and status cannot be truthfully assigned.
-
-## Deferred scope
-
-No code, dependency, fixture, compatibility claim, Unix-socket or stdio execution loop, TCP binding, authentication, or remote-access behavior belongs in this documentation-only slice. TCP and authentication remain outside local U8 scope unless separate threat-model approval exists.
+- TCP transport and network authentication are out of scope for local U8; stdio framing is standard.
+- Unnegotiated client callbacks must fail closed.
+- Handwritten subset types do not establish schema conformance.
+- File system and terminal operations requested via ACP callbacks are subject to boundary check and permission confirmation.
 
 ## Validation
 
 Run:
 
 ```text
+scripts/check-acp-schema
 scripts/check-doc-consistency
 ```
-
-Workspace tests are not an ACP validation gate because U8 has no implementation or fixtures.

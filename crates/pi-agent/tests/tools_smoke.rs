@@ -87,11 +87,14 @@ async fn edit_replaces_single_occurrence() {
     let res = edit::EditTool
         .execute(
             "1",
-            json!({"path": path_s, "old_string": "bar", "new_string": "BAR"}),
+            json!({"path": path_s, "edits": [{"oldText": "bar", "newText": "BAR"}]}),
         )
         .await
         .unwrap();
-    assert!(res.content[0].as_text().unwrap().contains("edited"));
+    assert!(res.content[0]
+        .as_text()
+        .unwrap()
+        .contains("Successfully replaced 1 block(s)"));
     let diff = res.content[1].as_text().unwrap();
     assert!(
         diff.contains("-foo bar baz"),
@@ -103,6 +106,78 @@ async fn edit_replaces_single_occurrence() {
     );
     let after = std::fs::read_to_string(&path).unwrap();
     assert_eq!(after, "foo BAR baz");
+}
+
+#[tokio::test]
+async fn edit_multi_block_and_original_matching() {
+    let dir = scratch_dir();
+    let path = dir.join("a.txt");
+    std::fs::write(&path, "foo\nbar\nbaz\n").unwrap();
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "foo\n", "newText": "foo bar\n"},
+                {"oldText": "bar\n", "newText": "BAR\n"}
+            ]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"foo bar\nBAR\nbaz\n");
+}
+
+#[tokio::test]
+async fn edit_rejects_overlap_and_missing_without_write() {
+    let dir = scratch_dir();
+    let path = dir.join("a.txt");
+    let original = b"one\ntwo\nthree\n";
+    std::fs::write(&path, original).unwrap();
+    let error = edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "one\ntwo\n", "newText": "ONE\n"},
+                {"oldText": "two\nthree\n", "newText": "TWO\n"}
+            ]}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("overlap"));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let error = edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "one\n", "newText": "ONE\n"},
+                {"oldText": "missing\n", "newText": "MISSING\n"}
+            ]}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("Could not find edits[1]"));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[tokio::test]
+async fn edit_preserves_bom_and_crlf() {
+    let dir = scratch_dir();
+    let path = dir.join("a.txt");
+    let mut original = vec![0xef, 0xbb, 0xbf];
+    original.extend_from_slice(b"alpha\r\nbeta\r\ngamma\r\n");
+    std::fs::write(&path, &original).unwrap();
+    edit::EditTool
+        .execute(
+            "1",
+            json!({"path": path, "edits": [
+                {"oldText": "alpha\n", "newText": "ALPHA\n"},
+                {"oldText": "gamma\n", "newText": "GAMMA\n"}
+            ]}),
+        )
+        .await
+        .unwrap();
+    let mut expected = vec![0xef, 0xbb, 0xbf];
+    expected.extend_from_slice(b"ALPHA\r\nbeta\r\nGAMMA\r\n");
+    assert_eq!(std::fs::read(&path).unwrap(), expected);
 }
 
 #[tokio::test]

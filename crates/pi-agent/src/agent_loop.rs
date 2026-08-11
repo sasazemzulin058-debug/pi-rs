@@ -13,7 +13,10 @@ use tokio::sync::mpsc;
 use tracing::instrument;
 
 use crate::error::{AgentError, Result};
-use crate::types::{AgentConfig, AgentEvent, AgentTool, AgentToolResult, PermissionDecision};
+use crate::types::{
+    AgentConfig, AgentEvent, AgentTool, AgentToolResult, BeforeToolCall, BeforeToolCallResult,
+    PermissionDecision,
+};
 
 pub struct AgentRun {
     pub messages: Vec<Message>,
@@ -207,7 +210,50 @@ pub(crate) async fn run_agent_with_history_and_steering(
 
         if has_tool_calls {
             any_terminate = true;
-            for (id, name, args) in tool_calls {
+            for (id, name, mut args) in tool_calls {
+                if let Some(hook) = &config.tool_call_hook {
+                    match hook
+                        .before_tool_call(BeforeToolCall {
+                            tool_call_id: id.clone(),
+                            tool_name: name.clone(),
+                            args,
+                        })
+                        .await
+                    {
+                        Ok(BeforeToolCallResult::Continue { args: updated }) => args = updated,
+                        Ok(BeforeToolCallResult::Block { reason }) => {
+                            let reason = reason.unwrap_or_else(|| "blocked by tool hook".into());
+                            let content = vec![Content::text(format!("tool blocked: {reason}"))];
+                            messages.push(Message::ToolResult(ToolResultMessage {
+                                tool_call_id: id,
+                                tool_name: name,
+                                content,
+                                is_error: true,
+                                details: None,
+                                usage: None,
+                                added_tool_names: None,
+                                timestamp: pi_ai::now_ms(),
+                            }));
+                            any_terminate = false;
+                            continue;
+                        }
+                        Err(error) => {
+                            let reason = format!("tool hook failed: {error}");
+                            messages.push(Message::ToolResult(ToolResultMessage {
+                                tool_call_id: id,
+                                tool_name: name,
+                                content: vec![Content::text(reason)],
+                                is_error: true,
+                                details: None,
+                                usage: None,
+                                added_tool_names: None,
+                                timestamp: pi_ai::now_ms(),
+                            }));
+                            any_terminate = false;
+                            continue;
+                        }
+                    }
+                }
                 // Permission gate (only for tools that require it, and only once
                 // per name per run if the user said "allow session").
                 let tool_obj = tool_index.get(&name);

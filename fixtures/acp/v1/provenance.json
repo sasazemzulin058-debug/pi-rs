@@ -1,0 +1,8 @@
+{
+  "source": "https://github.com/agentclientprotocol/agent-client-protocol/releases/latest/download/schema.json",
+  "documentation": "https://agentclientprotocol.com/protocol/v1/schema",
+  "retrieved_at": "2026-08-11",
+  "sha256": "92c1dfcda10dd47e99127500a3763da2b471f9ac61e12b9bf0430c32cf953796",
+  "license": "Apache-2.0",
+  "notes": "Official ACP v1 schema release artifact; pinned byte-for-byte in schema.json."
+}

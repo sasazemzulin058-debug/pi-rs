@@ -1,0 +1,6 @@
+[
+  {"type":"agent_start"},
+  {"type":"turn_start"},
+  {"type":"text_delta","delta":"hi"},
+  {"type":"turn_end"}
+]

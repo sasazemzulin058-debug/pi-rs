@@ -1,23 +1,31 @@
 # U5 RPC Checkpoint
 
+Status: IN PROGRESS (11/32 RPC commands recognized; queue and thinking controls implemented subsets; source-attested fixtures only)
+
 ## Completed
 
-- `crates/pi-coding-agent/src/rpc/mod.rs` defines `transport` and `types` modules.
-- `crates/pi-coding-agent/src/rpc/transport.rs` provides bounded JSONL framing through `read_record` and `write_record`. It accepts LF, CRLF, and final records without newline; skips empty lines; rejects invalid UTF-8 and records larger than `MAX_RECORD_SIZE`.
-- `crates/pi-coding-agent/src/rpc/types.rs` defines bounded wire types: `RpcRequest`, `RpcResponse`, `RpcState`, `RpcCommand`, and strict `StreamingBehavior` (`steer` or `followUp`). State is carried in response `data`; no duplicate top-level `state` field exists.
-- Boundary and rejection tests cover LF, CRLF, EOF, invalid UTF-8, oversized records, request shape, response shape, invalid streaming behavior, and invalid message types. `RpcRequest::command_kind` rejects unknown commands.
+- `crates/pi-coding-agent/src/rpc/types.rs` defines `RpcCommand::SetSteeringMode` and `SetFollowUpMode`, typed `RpcQueueMode` (`"all"`, `"one-at-a-time"`), and omitted response `id` when absent (`#[serde(skip_serializing_if = "Option::is_none")]`).
+- `crates/pi-coding-agent/src/rpc/server.rs` dispatches `set_steering_mode` and `set_follow_up_mode` to `AgentSession`, exposes updated state via `get_state`, handles error recovery for missing modes, and passes source-attested fixture replay without provider calls.
+- `crates/pi-coding-agent/tests/fixtures/rpc-0.83-queue-controls.json` provides exact pinned request/response fixture with `source-attested` identity metadata.
+- `crates/pi-coding-agent/tests/rpc_cli.rs` proves queue-control command execution and state visibility via public CLI `--mode rpc`.
 
-## Intentionally unexposed
+## Verification Evidence
 
-- `rpc` is declared in `crates/pi-coding-agent/src/main.rs` with `#[allow(dead_code)]`. No RPC runtime server, session control loop, stdin/stdout dispatch, or public CLI behavior is exposed.
-- `cli.rpc` remains deferred in `docs/compatibility-matrix.md`.
+- `cargo test --locked -p pi-coding-agent --bin pi-rs rpc::types::tests -- --nocapture`: passed.
+- `cargo test --locked -p pi-coding-agent --bin pi-rs rpc::server::tests -- --nocapture`: passed.
+- `cargo test --locked -p pi-coding-agent --test rpc_cli -- --nocapture`: passed.
+- `cargo fmt --check`: passed.
+- `./scripts/check-doc-consistency`: passed.
+- `python3 scripts/validate-fixture-manifest`: passed.
+- `git diff --check`: passed.
 
-## Known residual gaps
+## Residual gaps
 
-- No runtime wiring or CLI entry point exists, so RPC commands are not executable through the binary.
-- No upstream-compatible scripted RPC command matrix or fixture-backed runtime verification exists.
-- Request-level command semantics, session ownership/concurrency, event streaming, error propagation, and permission integration remain deferred with runtime work.
+- Recognized RPC command count: 11/32 (`prompt`, `steer`, `follow_up`, `abort`, `new_session`, `get_state`, `set_steering_mode`, `set_follow_up_mode`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels`). Thinking controls are source-attested only; upstream capture is unavailable.
+- `get_state` response shape gaps: full upstream `Model` object projection missing (currently model ID string), `autoCompactionEnabled` field missing, optional `sessionFile` / `sessionName` fields omitted.
+- Unimplemented RPC commands: model controls (`set_model`, `cycle_model`, `get_available_models`), compaction, retry, bash execution, session management/fork/tree, message history, slash command discovery. Thinking `max` is collapsed to `xhigh`; full upstream thinking-level semantics remain unverified.
+- Host oracle capture: direct 0.83 capture unavailable locally; fixtures remain `source-attested`.
 
 ## Scope boundary
 
-This checkpoint contains transport and wire-type groundwork only. Runtime integration belongs to a later U5 slice; no U6-U8 work is included.
+U5 files and queue-control fixtures only. U4, U6, U7, and U8 changes remain outside this checkpoint.

@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+schema="$root/fixtures/acp/v1/schema.json"
+provenance="$root/fixtures/acp/v1/provenance.json"
+python3 - "$schema" "$provenance" <<'PY'
+import hashlib, json, pathlib, sys
+schema, provenance = map(pathlib.Path, sys.argv[1:])
+json.loads(schema.read_text())
+p = json.loads(provenance.read_text())
+actual = hashlib.sha256(schema.read_bytes()).hexdigest()
+if actual != p["sha256"]:
+    raise SystemExit(f"ACP schema SHA-256 mismatch: {actual} != {p['sha256']}")
+print(f"ACP v1 schema valid; sha256={actual}")
+PY

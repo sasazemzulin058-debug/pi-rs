@@ -1,41 +1,20 @@
-# U7 Extension Architecture & Fail-Closed Checkpoint
+# U7 Extension Checkpoint
 
-## Status: Design & Diagnostics (Fail-Closed)
+## Status
 
-### Context & Goal
+IN_PROGRESS — U7 Node host protocol fixes applied; execution remains hook-only and no agent manager wiring.
 
-Upstream Pi supports loading TypeScript/JavaScript extensions via Node.js/jiti dynamic runtime loading. In `pi-rs`, runtime dynamic execution of TS/JS extensions via Node/jiti sidecars is **deferred**.
+## Current change
 
-This slice establishes:
+`extension_host.rs` now performs handshake before extension load, uses bounded incremental frames with finite response timeout and kill/reap on startup failure, converts paths with `pathToFileURL`, and tests mutation hook roundtrip. `extension.rs` now enforces trusted project directory equality with `CanonicalProjectRoot`, resolves trusted explicit files and one-level package directories, validates malformed/invalid/missing manifest entries, rejects uppercase executable suffixes, reports missing trust roots, tests global lexical ordering and canonical symlink containment, and removes `extension.json` heuristic. Project discovery remains trust-gated; global discovery remains canonical-root-gated; candidate canonicalization and first-wins dedup remain fail-closed.
 
-1. **ADR**: Design decision documenting deferred upstream TS/jiti runtime sidecars and outlining safe Tier-A host capability boundary.
-2. **Fail-closed Unsupported Diagnostic**: Explicit helper for caller-supplied extension paths/manifests (`ExtensionDiagnostic`), failing with stable, control-character sanitized diagnostics (`UnsupportedExtension`) rather than silent misbehavior or unhandled dynamic loading.
+## Validation
 
-### ADR: Extension Runtime Model (Deferred Node/jiti Sidecars)
+- Tests cover trusted-root mismatch, missing extension root, directory symlink diagnostics, no `extension.json` heuristic, malformed/invalid/missing manifest entries, uppercase suffixes, explicit file/package resolution, missing trust root, global lexical ordering and symlink containment, and first-wins dedup.
+- Validation: `rustfmt --edition 2021 crates/pi-coding-agent/src/extension.rs` passed; `git diff --check -- crates/pi-coding-agent/src/extension.rs docs/plans/u7-extension-checkpoint.md` passed. Focused Cargo test was attempted but blocked by unrelated dirty-lane compile errors in `crates/pi-coding-agent/tests/resource_loader.rs` (`linked_worktree_fail_open_matrix`) and `crates/pi-coding-agent/src/interactive.rs` (`handle` not mutable). Full `cargo fmt --all -- --check`, clippy, and doc consistency remain not-run because workspace is already fmt-dirty outside U7.
+- Focused Node host test passed when Node runtime available; full workspace validation remains pending.
+- No agent manager/tool registry wiring claim. No GitHub operations or commits performed by worker.
 
-- **Decision**: Rust `pi-rs` core does NOT spawn Node.js/jiti sub-processes or execute untrusted JS/TS extension code directly in U7.
-- **Upstream compatibility**: Upstream Pi uses Node.js host environments to dynamically require `.ts`/`.js` modules. `pi-rs` targets single-binary performance and strict resource boundaries.
-- **Fail-Closed Strategy**:
-  - `ExtensionDiagnostic` provides explicit `check_extension_path` validation for caller-supplied extension candidate paths, returning `UnsupportedExtension` with sanitized paths.
-  - Core agent runtime remains fully functional when extensions are absent or disabled.
-  - Safe discovery and parsing of metadata (frontmatter/manifests) without execution may be enabled for passive registration inspection in future milestones.
+## Scope
 
-### Included in Slice
-
-- `docs/plans/u7-extension-checkpoint.md` (this checkpoint / ADR).
-- `ExtensionDiagnostic` helper module in `pi-coding-agent` (`crates/pi-coding-agent/src/extension.rs`), unexposed until CLI/config extension flags exist.
-- Unit and boundary tests verifying sanitized path diagnostics for explicit extension candidate check calls.
-
-### Excluded (Future Slices / Deferred)
-
-- No Node.js subprocess IPC / JSON-RPC sidecar protocol execution.
-- No dynamic TS runtime integration (jiti, Bun, Deno).
-- No Tier-A tool/hook execution sidecars.
-- No Oh My Pi API implementation.
-
-### Validation
-
-- Unit tests for unsupported extension error reporting and path sanitization.
-- `cargo check --workspace` passes.
-- `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- `scripts/check-doc-consistency` passes.
+U7 files: `crates/pi-coding-agent/src/extension.rs`, `crates/pi-coding-agent/src/extension_host.rs`, `crates/pi-coding-agent/node/extension-host.mjs`, and this checkpoint. Runtime host remains trusted hook boundary only.

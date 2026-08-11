@@ -118,6 +118,35 @@ def capture_tool_bash_cancel_descendants(upstream_root: str) -> Dict[str, Any]:
     val = normalize_structure(raw)
     return val if isinstance(val, dict) else {"result": val}
 
+def capture_tool_edit(upstream_root: str) -> Dict[str, Any]:
+    """Capture exact multi-edit projections from pinned coding-agent edit tool."""
+    script = r'''import { NodeExecutionEnv } from "AGENT_NODE";
+import { createEditTool } from "AGENT_EDIT";
+import { writeFile, readFile } from "node:fs/promises";
+const root = process.argv[2];
+const env = new NodeExecutionEnv({ cwd: root });
+const cases = {
+  two_disjoint_original_matches: {content: "alpha\\nbeta\\ngamma\\ndelta\\n", edits: [{oldText:"alpha\\n",newText:"ALPHA\\n"},{oldText:"gamma\\n",newText:"GAMMA\\n"}]},
+  matches_original_not_incremental: {content: "foo\\nbar\\nbaz\\n", edits: [{oldText:"foo\\n",newText:"foo bar\\n"},{oldText:"bar\\n",newText:"BAR\\n"}]},
+  overlap_rejected_without_write: {content: "one\\ntwo\\nthree\\n", edits: [{oldText:"one\\ntwo\\n",newText:"ONE\\nTWO\\n"},{oldText:"two\\nthree\\n",newText:"TWO\\nTHREE\\n"}]},
+  missing_later_edit_without_partial_write: {content: "alpha\\nbeta\\ngamma\\n", edits: [{oldText:"alpha\\n",newText:"ALPHA\\n"},{oldText:"missing\\n",newText:"MISSING\\n"}]},
+  bom_crlf_preserved: {content: "\\ufeffalpha\\r\\nbeta\\r\\ngamma\\r\\n", edits: [{oldText:"alpha\\n",newText:"ALPHA\\n"},{oldText:"gamma\\n",newText:"GAMMA\\n"}]}
+};
+const out = {schema:{required:["path","edits"],editRequired:["oldText","newText"]},scenarios:{}};
+for (const [name, c] of Object.entries(cases)) { const p = `${root}/edit.txt`; await writeFile(p,c.content); try { const r=await createEditTool().execute("edit",{path:p,edits:c.edits},undefined,undefined,{env}); out.scenarios[name]={ok:true,message:r.content.filter(x=>x.type==="text")[0].text,finalHex:Buffer.from(await readFile(p)).toString("hex")}; } catch(e) { out.scenarios[name]={ok:false,error:e instanceof Error?e.message:String(e),finalHex:Buffer.from(await readFile(p)).toString("hex")}; } }
+console.log(JSON.stringify(out));
+'''
+    script = script.replace("\\\\n", "\\n").replace("\\\\r", "\\r").replace("\\\\u", "\\u")
+    script = script.replace("AGENT_NODE", str(Path(upstream_root) / "packages/agent/src/node.ts")).replace("AGENT_EDIT", str(Path(upstream_root) / "packages/coding-agent/src/core/tools/edit.ts"))
+    with tempfile.TemporaryDirectory(dir=upstream_root) as tmp_dir:
+        root = Path(tmp_dir) / "edit-fixture"; root.mkdir()
+        script_path = Path(tmp_dir) / "capture-edit.ts"; script_path.write_text(script, encoding="utf-8")
+        res = subprocess.run(["node", "--import", "tsx/esm", str(script_path), str(root)], cwd=upstream_root, capture_output=True, text=True)
+        if res.returncode != 0: raise RuntimeError(f"upstream edit capture failed ({res.returncode}): {res.stderr.strip()}")
+        raw = json.loads(res.stdout.strip().splitlines()[-1])
+    val = normalize_structure(raw)
+    return val if isinstance(val, dict) else {"result": val}
+
 def capture_resource_context_precedence(upstream_root: str) -> Dict[str, Any]:
     """Capture case resource.context-precedence offline structure."""
     raw: Dict[str, Any] = {
@@ -204,6 +233,7 @@ ADAPTERS = {
     "agent.serial-tool-loop": capture_agent_serial_tool_loop,
     "provider.openai-chat.fragmented-sse": capture_provider_openai_chat_fragmented_sse,
     "tool.read.bounds": capture_tool_read_bounds,
+    "tool.edit": capture_tool_edit,
     "tool.bash.cancel-descendants": capture_tool_bash_cancel_descendants,
     "resource.context-precedence": capture_resource_context_precedence,
     "resource.untrusted-project": capture_resource_untrusted_project,

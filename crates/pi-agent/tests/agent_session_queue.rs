@@ -629,3 +629,74 @@ async fn test_cancel_interrupts_active_provider() {
     assert!(err.to_string().contains("request cancelled"));
     assert_eq!(session.state().phase, SessionPhase::Idle);
 }
+
+#[tokio::test]
+async fn test_thinking_level_mutation_shared_and_snapshotted() {
+    struct OptionsCapturingFactory {
+        options: Arc<Mutex<Vec<StreamOptions>>>,
+    }
+
+    #[async_trait]
+    impl ProviderFactory for OptionsCapturingFactory {
+        async fn stream(
+            &self,
+            _model: &Model,
+            _context: &Context,
+            options: &StreamOptions,
+        ) -> pi_ai::Result<AssistantMessageEventStream> {
+            self.options.lock().unwrap().push(options.clone());
+            let msg = AssistantMessage {
+                content: vec![Content::Text {
+                    text: "done".into(),
+                    text_signature: None,
+                }],
+                api: "openai-completions".to_string(),
+                provider: "test-provider".to_string(),
+                model: "test-model".to_string(),
+                response_model: None,
+                response_id: None,
+                diagnostics: None,
+                raw_stop_reason: None,
+                error_message: None,
+                timestamp: now_ms(),
+                usage: Usage::default(),
+                stop_reason: StopReason::Stop,
+            };
+            Ok(Box::pin(async_stream::stream! {
+                yield Ok(AssistantMessageEvent::Start);
+                yield Ok(AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: msg,
+                });
+            }))
+        }
+    }
+
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let factory = Arc::new(OptionsCapturingFactory {
+        options: captured.clone(),
+    });
+    let cfg = AgentConfig::new(test_model(), "system").with_provider_factory(factory);
+    let session = AgentSession::new(cfg, vec![]);
+    let session_clone = session.clone();
+
+    assert_eq!(session.thinking_level(), pi_ai::ThinkingLevel::Off);
+
+    session.set_thinking_level(pi_ai::ThinkingLevel::High);
+    assert_eq!(session_clone.thinking_level(), pi_ai::ThinkingLevel::High);
+
+    session.queue_followup(Message::user_text("run 1")).unwrap();
+    session.run(None).await.unwrap();
+
+    let opts1 = captured.lock().unwrap().clone();
+    assert_eq!(opts1.len(), 1);
+    assert_eq!(opts1[0].reasoning, Some(pi_ai::ThinkingLevel::High));
+
+    session.set_thinking_level(pi_ai::ThinkingLevel::Low);
+    session.queue_followup(Message::user_text("run 2")).unwrap();
+    session.run(None).await.unwrap();
+
+    let opts2 = captured.lock().unwrap().clone();
+    assert_eq!(opts2.len(), 2);
+    assert_eq!(opts2[1].reasoning, Some(pi_ai::ThinkingLevel::Low));
+}

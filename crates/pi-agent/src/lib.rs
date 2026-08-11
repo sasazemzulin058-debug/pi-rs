@@ -17,5 +17,6 @@ pub use agent_session::AgentSession;
 pub use error::{AgentError, Result};
 pub use types::{
     tool_def, AgentConfig, AgentEvent, AgentSessionState, AgentTool, AgentToolResult,
-    AllowAllPolicy, PermissionDecision, PermissionPolicy, QueueMode, RuntimeLimits, SessionPhase,
+    AllowAllPolicy, BeforeToolCall, BeforeToolCallResult, PermissionDecision, PermissionPolicy,
+    QueueMode, RuntimeLimits, SessionPhase, ToolCallHook,
 };

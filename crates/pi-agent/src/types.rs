@@ -45,6 +45,26 @@ pub trait PermissionPolicy: Send + Sync {
     async fn check(&self, tool_name: &str, args: &Value) -> PermissionDecision;
 }
 
+/// Input delivered before permission checks and tool execution.
+#[derive(Debug, Clone)]
+pub struct BeforeToolCall {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub args: Value,
+}
+
+/// Result returned by a pre-tool hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BeforeToolCallResult {
+    Continue { args: Value },
+    Block { reason: Option<String> },
+}
+
+#[async_trait]
+pub trait ToolCallHook: Send + Sync {
+    async fn before_tool_call(&self, call: BeforeToolCall) -> Result<BeforeToolCallResult, String>;
+}
+
 /// Always-allow policy — useful for tests and non-interactive runs.
 pub struct AllowAllPolicy;
 
@@ -103,6 +123,7 @@ pub struct AgentConfig {
     pub system_prompt: String,
     pub permission: Arc<dyn PermissionPolicy>,
     pub provider_factory: Arc<dyn ProviderFactory>,
+    pub tool_call_hook: Option<Arc<dyn ToolCallHook>>,
 }
 
 impl AgentConfig {
@@ -116,6 +137,7 @@ impl AgentConfig {
             system_prompt: system_prompt.into(),
             permission: Arc::new(AllowAllPolicy),
             provider_factory: Arc::new(DefaultProviderFactory),
+            tool_call_hook: None,
         }
     }
 
@@ -141,6 +163,11 @@ impl AgentConfig {
 
     pub fn with_provider_factory(mut self, factory: Arc<dyn ProviderFactory>) -> Self {
         self.provider_factory = factory;
+        self
+    }
+
+    pub fn with_tool_call_hook(mut self, hook: Arc<dyn ToolCallHook>) -> Self {
+        self.tool_call_hook = Some(hook);
         self
     }
 }

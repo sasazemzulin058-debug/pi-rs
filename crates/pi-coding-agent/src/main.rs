@@ -1,6 +1,10 @@
 //! `pi-rs` — interactive coding agent CLI.
 
+mod acp;
 mod config;
+#[allow(dead_code)]
+mod extension_host;
+mod node_runtime;
 // ponytail: extension module provides fail-closed diagnostic for unsupported dynamic TS/JS extensions.
 #[allow(dead_code)]
 mod extension;
@@ -9,8 +13,7 @@ mod interactive;
 mod permission;
 mod print_mode;
 mod project;
-// ponytail: U5 transport/types slice remains unexposed until RPC server wiring lands.
-#[allow(dead_code)]
+// ponytail: U5 transport/types/server RPC module.
 mod rpc;
 // ponytail: session import/JSONL APIs are library seams pending CLI wiring; remove once wired.
 #[allow(dead_code)]
@@ -97,14 +100,26 @@ mod tests {
 
 use std::sync::Arc;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::{parse_thinking_level, AppConfig};
 use crate::permission::{CliPermission, Mode};
 
+#[derive(Clone, Debug, ValueEnum)]
+enum OutputMode {
+    Text,
+    Json,
+    Rpc,
+    Acp,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "pi-rs", version, about = "Pi coding agent (Rust port)")]
 struct Cli {
+    /// Output mode (`text`, `json`, `rpc`, or `acp`).
+    #[arg(long, value_enum, default_value_t = OutputMode::Text)]
+    mode: OutputMode,
+
     /// One-shot prompt — run agent to completion and exit.
     #[arg(short, long, alias = "print")]
     prompt: Option<String>,
@@ -140,6 +155,21 @@ enum Cmd {
         #[command(subcommand)]
         action: SessionAction,
     },
+    /// Check optional JavaScript extension runtime.
+    Extensions {
+        #[command(subcommand)]
+        action: ExtensionAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ExtensionAction {
+    /// Probe Node.js without installing or changing system state.
+    Check {
+        /// Explicit Node executable path; otherwise search PATH and Termux PREFIX.
+        #[arg(long)]
+        node: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -170,6 +200,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let cli = Cli::parse();
+    if matches!(cli.mode, OutputMode::Acp) {
+        if cli.prompt.is_some() || cli.resume.is_some() || cli.json || cli.cmd.is_some() {
+            anyhow::bail!(
+                "--mode acp cannot be combined with --prompt, --resume, --json, or subcommands"
+            );
+        }
+        return acp::run();
+    }
     if let Some(m) = &cli.model {
         std::env::set_var("PI_MODEL", m);
     }
@@ -182,14 +220,40 @@ async fn main() -> anyhow::Result<()> {
         .and_then(parse_thinking_level)
         .unwrap_or_default();
     let yolo = cli.yolo || file_cfg.yolo;
-    let json = cli.json || file_cfg.json;
+    let json = cli.json || file_cfg.json || matches!(cli.mode, OutputMode::Json);
 
     let mut app = AppConfig::new()?;
     app.max_turns = max_turns;
     app.thinking_level = thinking_level;
 
+    if matches!(cli.mode, OutputMode::Rpc) {
+        if cli.prompt.is_some() || cli.resume.is_some() || cli.cmd.is_some() || cli.json {
+            anyhow::bail!(
+                "--mode rpc cannot be combined with --prompt, --resume, --json, or subcommands"
+            );
+        }
+        let permission_policy: Arc<dyn pi_agent::PermissionPolicy> = if yolo {
+            Arc::new(CliPermission::new(Mode::Yolo))
+        } else {
+            Arc::new(CliPermission::new(Mode::DenyAll))
+        };
+        let cwd = std::env::current_dir().ok();
+        let explicitly_trusted = std::env::var("PI_TRUST_PROJECT").as_deref() == Ok("1");
+        let trust_context =
+            crate::trust::resolve_trust(cwd.as_deref(), &app.config_dir, explicitly_trusted)?;
+
+        let stdin = tokio::io::BufReader::new(tokio::io::stdin());
+        let stdout = tokio::io::stdout();
+        return rpc::server::run_server(app, permission_policy, trust_context, stdin, stdout)
+            .await
+            .map_err(|e| anyhow::anyhow!(e));
+    }
+
     if let Some(Cmd::Sessions { action }) = cli.cmd {
         return run_sessions_cmd(&app, action);
+    }
+    if let Some(Cmd::Extensions { action }) = cli.cmd {
+        return run_extensions_cmd(action);
     }
 
     let permission: Arc<CliPermission> = if yolo {
@@ -219,6 +283,20 @@ async fn main() -> anyhow::Result<()> {
             interactive::run_interactive(&app, permission, initial, trust_context).await
         }
     }
+}
+
+fn run_extensions_cmd(action: ExtensionAction) -> anyhow::Result<()> {
+    match action {
+        ExtensionAction::Check { node } => {
+            let runtime = crate::node_runtime::resolve_node(node.as_deref())?;
+            println!(
+                "Node runtime: {} ({})",
+                runtime.executable.display(),
+                runtime.version
+            );
+        }
+    }
+    Ok(())
 }
 
 fn run_sessions_cmd(app: &AppConfig, action: SessionAction) -> anyhow::Result<()> {

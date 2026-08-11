@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "version": "0.83.0",
+    "commit": "f0deb8dd8e9611e89b5bc4145ca92c03ae6ed4ee",
+    "sources": [
+      "packages/coding-agent/src/modes/rpc/rpc-types.ts",
+      "packages/coding-agent/src/modes/rpc/rpc-mode.ts"
+    ],
+    "evidenceKind": "source-attested"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "type": "set_steering_mode",
+        "id": "req-steering-all",
+        "mode": "all"
+      },
+      "response": {
+        "type": "response",
+        "command": "set_steering_mode",
+        "id": "req-steering-all",
+        "success": true
+      }
+    },
+    {
+      "request": {
+        "type": "set_steering_mode",
+        "mode": "one-at-a-time"
+      },
+      "response": {
+        "type": "response",
+        "command": "set_steering_mode",
+        "success": true
+      }
+    },
+    {
+      "request": {
+        "type": "set_follow_up_mode",
+        "id": "req-followup-all",
+        "mode": "all"
+      },
+      "response": {
+        "type": "response",
+        "command": "set_follow_up_mode",
+        "id": "req-followup-all",
+        "success": true
+      }
+    },
+    {
+      "request": {
+        "type": "set_follow_up_mode",
+        "mode": "one-at-a-time"
+      },
+      "response": {
+        "type": "response",
+        "command": "set_follow_up_mode",
+        "success": true
+      }
+    }
+  ]
+}

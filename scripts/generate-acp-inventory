@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+python3 - "$root/fixtures/acp/v1/schema.json" <<'PY'
+import json, pathlib, sys
+schema = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print("ACP v1 schema inventory")
+print(f"definitions={len(schema.get('$defs', {}))}")
+for name in sorted(schema.get('$defs', {})):
+    print(name)
+PY
